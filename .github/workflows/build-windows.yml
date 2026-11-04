@@ -1,0 +1,71 @@
+name: Build Windows
+
+# 推送或手动触发时：跑全部引擎测试 + 编译桌面版 + 打包上传
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch: {}        # 允许网页手动触发
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Qt 6 (MSVC)
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.*'
+          host: 'windows'
+          target: 'desktop'
+          arch: 'win64_msvc'
+          cache: true
+
+      - name: Configure (engine + tests + app)
+        shell: pwsh
+        run: cmake -B build -DOC_BUILD_QT=ON -DCMAKE_PREFIX_PATH="$env:QT_INSTALL_DIR"
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Generate test fixtures
+        shell: pwsh
+        run: |
+          python tests/make_fixtures.py
+          python tests/make_big_docx.py 10 800 300
+
+      - name: Run engine tests (M1/M2/M3)
+        shell: pwsh
+        run: |
+          $fail = 0
+          foreach ($t in @('core_tests','m2_tests','m3_tests')) {
+            & "build\Release\$t.exe" "tests\data"
+            if ($LASTEXITCODE -ne 0) { $fail = 1 }
+          }
+          exit $fail
+
+      - name: Deploy Qt runtime (windeployqt)
+        shell: pwsh
+        run: |
+          windeployqt --release build\Release\office-clone.exe
+
+      - name: Upload app package
+        uses: actions/upload-artifact@v4
+        with:
+          name: office-clone-windows-x64
+          path: |
+            build/Release/*.exe
+            build/Release/*.dll
+          retention-days: 30
+
+      - name: Upload test report artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-and-reports
+          path: |
+            PERF.md
+            REALDOC_REPORT.md
+          if-no-files-found: ignore
+          retention-days: 7
