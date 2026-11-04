@@ -1,6 +1,6 @@
 #include "ImageCache.h"
-#include "DocxReader.h"
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 
 namespace oc {
@@ -13,6 +13,11 @@ void ImageCache::setSource(const std::string& docxPath, const Document* doc) {
     lru_.clear();
     map_.clear();
     st_ = Stats{};
+    // P0 修复：长驻索引句柄——中央目录只解析一次，取图直接 fseek
+    std::string err;
+    zipOk_ = zip_.open(docxPath, &err);
+    if (!zipOk_)
+        std::fprintf(stderr, "ImageCache: open zip failed: %s\n", err.c_str());
 }
 
 std::string ImageCache::makeKey(const std::string& relId, uint32_t w, uint32_t h) {
@@ -32,7 +37,6 @@ void ImageCache::evictIfNeeded() {
 const DecodedImage* ImageCache::get(const std::string& relId, uint32_t targetW, uint32_t targetH) {
     if (!doc_ || srcPath_.empty()) { ++st_.misses; return nullptr; }
 
-    // 查 mediaIndex
     const MediaEntry* me = nullptr;
     for (const auto& m : doc_->mediaIndex)
         if (m.relId == relId) { me = &m; break; }
@@ -47,12 +51,18 @@ const DecodedImage* ImageCache::get(const std::string& relId, uint32_t targetW, 
     }
     ++st_.misses;
 
-    // 读文件字节（M3：每次重开 zip；M3.5：句柄复用优化）
+    // 读取媒体字节：长驻句柄（无重开 IO 放大）
+    if (!zipOk_) { ++st_.decodeErrors; return nullptr; }
+    const ZipEntry* ze = zip_.find(me->zipPath);
+    if (!ze) { ++st_.decodeErrors; return nullptr; }
     std::vector<uint8_t> file;
-    if (!DocxReader::readMedia(srcPath_, me->zipPath, file)) {
+    auto t0 = std::chrono::steady_clock::now();
+    std::string rerr;
+    if (!zip_.read(*ze, file, 512ull * 1024 * 1024, &rerr)) {
         ++st_.decodeErrors;
         return nullptr;
     }
+    auto t1 = std::chrono::steady_clock::now();
 
     DecodedImage img;
     bool ok = false;
@@ -61,8 +71,10 @@ const DecodedImage* ImageCache::get(const std::string& relId, uint32_t targetW, 
     else if (external_)                                            // JPEG 等
         ok = external_(file, img);
     if (!ok) { ++st_.unsupported; return nullptr; }
+    auto t2 = std::chrono::steady_clock::now();
+    st_.lastReadMs = std::chrono::duration<double, std::milli>(t1 - t0).count();
+    st_.lastDecodeMs = std::chrono::duration<double, std::milli>(t2 - t1).count();
 
-    // 下采样到目标尺寸后缓存
     if (targetW) img = downsample(img, targetW, targetH ? targetH : targetW);
 
     Entry e;
