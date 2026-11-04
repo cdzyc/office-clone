@@ -16,10 +16,11 @@ jobs:
       - name: Install Qt 6 (MSVC)
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.*'
+          version: '6.8.1'
           host: 'windows'
           target: 'desktop'
-          arch: 'win64_msvc'
+          arch: 'win64_msvc2022_64'
+          archives: qtbase
           cache: true
 
       - name: Configure (engine + tests + app)
