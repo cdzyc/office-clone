@@ -38,83 +38,114 @@ uint32_t crc32(const uint8_t* data, size_t n) {
     return c ^ 0xFFFFFFFFu;
 }
 
+ZipReader::~ZipReader() {
+    if (fp_) fclose(fp_);
+}
+
+// ---- 内部：读 [off, off+len) 字节（索引模式 fseek；内存模式切片）----
+static bool readRange(FILE* fp, const std::vector<uint8_t>& mem, uint64_t total,
+                      uint64_t off, size_t len, std::vector<uint8_t>& buf) {
+    if (off + len > total) return false;
+    buf.resize(len ? len : 1);
+    if (fp) {
+        if (fseek(fp, (long)off, SEEK_SET) != 0) return false;   // <2GB（Zip64 之外）
+        return fread(buf.data(), 1, len, fp) == len;
+    }
+    if (len) memcpy(buf.data(), mem.data() + (size_t)off, len);
+    return true;
+}
+
 bool ZipReader::open(const std::string& path, std::string* err) {
-    FILE* f = fopen(path.c_str(), "rb");
-    if (!f) { if (err) *err = "cannot open file: " + path; return false; }
-    fseek(f, 0, SEEK_END);
-    long sz = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (sz < 0) { fclose(f); if (err) *err = "ftell failed"; return false; }
-    data_.resize((size_t)sz);
-    size_t got = fread(data_.data(), 1, (size_t)sz, f);
-    fclose(f);
-    if (got != (size_t)sz) { if (err) *err = "short read"; return false; }
+    if (fp_) { fclose(fp_); fp_ = nullptr; }
+    data_.clear(); entries_.clear(); fileSize_ = 0;
+    fp_ = fopen(path.c_str(), "rb");
+    if (!fp_) { if (err) *err = "cannot open file: " + path; return false; }
+    if (fseek(fp_, 0, SEEK_END) != 0) { if (err) *err = "seek failed"; return false; }
+    long sz = ftell(fp_);
+    if (sz < 0) { if (err) *err = "ftell failed"; return false; }
+    fileSize_ = (uint64_t)sz;
     return parseCentral(err);
 }
 
 bool ZipReader::openMemory(const std::vector<uint8_t>& data, std::string* err) {
+    if (fp_) { fclose(fp_); fp_ = nullptr; }
     data_ = data;
+    fileSize_ = data_.size();
     return parseCentral(err);
 }
 
 bool ZipReader::parseCentral(std::string* err) {
     entries_.clear();
-    const size_t n = data_.size();
+    const uint64_t n = fp_ ? fileSize_ : (uint64_t)data_.size();
     if (n < 22) { if (err) *err = "not a zip (too small)"; return false; }
 
-    // 从尾部找 EOCD（后面可能跟注释，最多 64KB）
-    size_t eocd = (size_t)-1;
-    size_t scanFrom = n >= 22 + 65535 ? n - 65535 - 22 : 0;
-    for (size_t i = n - 22 + 1; i-- > scanFrom; ) {
-        if (rd32(&data_[i]) == kEocdSig) { eocd = i; break; }
+    // 尾部读 EOCD 搜索窗（EOCD 距尾 ≤ 22 + 注释 ≤ 22+65535）
+    size_t scanLen = (size_t)std::min<uint64_t>(n, 22 + 65535);
+    std::vector<uint8_t> tail;
+    if (!readRange(fp_, data_, n, n - scanLen, scanLen, tail)) {
+        if (err) *err = "read tail failed";
+        return false;
     }
-    if (eocd == (size_t)-1) { if (err) *err = "EOCD not found"; return false; }
+    size_t eocdInTail = (size_t)-1;
+    for (size_t i = scanLen - 22 + 1; i-- > 0; ) {
+        if (rd32(&tail[i]) == kEocdSig) { eocdInTail = i; break; }
+    }
+    if (eocdInTail == (size_t)-1) { if (err) *err = "EOCD not found"; return false; }
+    const uint8_t* E = tail.data() + eocdInTail;
+    uint64_t eocd = (n - scanLen) + eocdInTail;        // 绝对偏移
 
-    uint16_t diskNo  = rd16(&data_[eocd + 4]);
-    uint16_t cenDisk = rd16(&data_[eocd + 6]);
-    uint16_t nDisk   = rd16(&data_[eocd + 8]);
-    uint16_t nTotal  = rd16(&data_[eocd + 10]);
-    uint32_t cenSize = rd32(&data_[eocd + 12]);
-    uint32_t cenOff  = rd32(&data_[eocd + 16]);
-    (void)diskNo; (void)cenDisk;
+    uint16_t diskNo  = rd16(E + 4);      // 本盘号
+    uint16_t cenDisk = rd16(E + 6);      // central 目录起始盘号
+    uint16_t nDisk   = rd16(E + 8);      // 本盘条目数
+    uint16_t nTotal  = rd16(E + 10);     // 总条目数
+    uint32_t cenSize = rd32(E + 12);
+    uint32_t cenOff  = rd32(E + 16);
 
-    if (nDisk != nTotal) {
+    if (diskNo != 0 || cenDisk != 0 || nDisk != nTotal) {
         if (err) *err = "multi-disk zip not supported";
         return false;
     }
     if (nTotal == 0xFFFF || cenSize == 0xFFFFFFFF || cenOff == 0xFFFFFFFF) {
-        if (err) *err = "Zip64 not supported yet (planned M3)";
+        if (err) *err = "Zip64 not supported yet (planned M3.5)";
         return false;
     }
-    // Zip64 EOCD 探测（位于 EOCD 前）——明确报错而不是误读
-    if (eocd >= 20 && rd32(&data_[eocd - 20]) == 0x07064b50) {
-        if (err) *err = "Zip64 locator present: not supported yet (planned M3)";
-        return false;
+    // Zip64 locator 探测（EOCD 前 20 字节）
+    if (eocd >= 20) {
+        std::vector<uint8_t> loc;
+        if (readRange(fp_, data_, n, eocd - 20, 4, loc) && rd32(loc.data()) == 0x07064b50) {
+            if (err) *err = "Zip64 locator present: not supported yet (planned M3.5)";
+            return false;
+        }
     }
     (void)kZip64Eocd;
 
     if ((uint64_t)cenOff + cenSize > n) { if (err) *err = "central dir out of range"; return false; }
 
-    size_t p = cenOff;
+    std::vector<uint8_t> cen;
+    if (!readRange(fp_, data_, n, cenOff, cenSize, cen)) {
+        if (err) *err = "read central failed";
+        return false;
+    }
+
+    size_t p = 0;
     entries_.reserve(nTotal);
     for (uint16_t i = 0; i < nTotal; ++i) {
-        if (p + 46 > n || rd32(&data_[p]) != kCenSig) {
+        if (p + 46 > cenSize || rd32(&cen[p]) != kCenSig) {
             if (err) *err = "bad central entry";
             return false;
         }
         ZipEntry e;
-        e.method      = rd16(&data_[p + 10]);
-        e.crc32       = rd32(&data_[p + 16]);
-        e.compSize    = rd32(&data_[p + 20]);
-        e.uncompSize  = rd32(&data_[p + 24]);
-        uint16_t nameLen = rd16(&data_[p + 28]);
-        uint16_t extraLen = rd16(&data_[p + 30]);
-        uint16_t commentLen = rd16(&data_[p + 32]);
-        e.localOffset = rd32(&data_[p + 42]);
-        if (p + 46 + nameLen > n) { if (err) *err = "bad name"; return false; }
-        e.name.assign(reinterpret_cast<const char*>(&data_[p + 46]), nameLen);
+        e.method      = rd16(&cen[p + 10]);
+        e.crc32       = rd32(&cen[p + 16]);
+        e.compSize    = rd32(&cen[p + 20]);
+        e.uncompSize  = rd32(&cen[p + 24]);
+        uint16_t nameLen = rd16(&cen[p + 28]);
+        uint16_t extraLen = rd16(&cen[p + 30]);
+        uint16_t commentLen = rd16(&cen[p + 32]);
+        e.localOffset = rd32(&cen[p + 42]);
+        if (p + 46 + nameLen > cenSize) { if (err) *err = "bad name"; return false; }
+        e.name.assign(reinterpret_cast<const char*>(&cen[p + 46]), nameLen);
         e.isDir = !e.name.empty() && e.name.back() == '/';
-        // UTF-8 标志（bit 11）——name 按字节保留，UTF-8 由上层处理
         entries_.push_back(std::move(e));
         p += 46 + (size_t)nameLen + extraLen + commentLen;
     }
@@ -127,26 +158,36 @@ const ZipEntry* ZipReader::find(const std::string& name) const {
     return nullptr;
 }
 
-bool ZipReader::read(const ZipEntry& e, std::vector<uint8_t>& out,
-                     size_t maxOut, std::string* err) const {
-    out.clear();
-    const size_t n = data_.size();
-    if (e.localOffset + 30 > n || rd32(&data_[(size_t)e.localOffset]) != kLocalSig) {
+// 读取条目压缩原始数据（local header 校验 + 定位）
+bool ZipReader::readRaw(const ZipEntry& e, std::vector<uint8_t>& raw, std::string* err) const {
+    const uint64_t n = fp_ ? fileSize_ : (uint64_t)data_.size();
+    std::vector<uint8_t> lh;
+    if (!readRange(fp_, data_, n, e.localOffset, 30, lh) || rd32(lh.data()) != kLocalSig) {
         if (err) *err = "bad local header: " + e.name;
         return false;
     }
-    uint16_t nameLen  = rd16(&data_[(size_t)e.localOffset + 26]);
-    uint16_t extraLen = rd16(&data_[(size_t)e.localOffset + 28]);
+    uint16_t nameLen  = rd16(lh.data() + 26);
+    uint16_t extraLen = rd16(lh.data() + 28);
     uint64_t dataOff  = e.localOffset + 30 + nameLen + extraLen;
-    if (dataOff + e.compSize > n) { if (err) *err = "entry data out of range"; return false; }
+    if (!readRange(fp_, data_, n, dataOff, (size_t)e.compSize, raw)) {
+        if (err) *err = "entry data out of range: " + e.name;
+        return false;
+    }
+    return true;
+}
+
+bool ZipReader::read(const ZipEntry& e, std::vector<uint8_t>& out,
+                     size_t maxOut, std::string* err) const {
+    out.clear();
+    std::vector<uint8_t> raw;
+    if (!readRaw(e, raw, err)) return false;
 
     if (e.method == 0) {                          // stored
         if (e.uncompSize != e.compSize) { if (err) *err = "stored size mismatch"; return false; }
         if (e.uncompSize > maxOut) { if (err) *err = "entry too large"; return false; }
-        out.assign(data_.begin() + (ptrdiff_t)dataOff,
-                   data_.begin() + (ptrdiff_t)(dataOff + e.compSize));
+        out = std::move(raw);
     } else if (e.method == 8) {                   // deflate
-        if (!oc::inflate(&data_[(size_t)dataOff], (size_t)e.compSize, out, maxOut)) {
+        if (!oc::inflate(raw.data(), raw.size(), out, maxOut)) {
             if (err) *err = "inflate failed: " + e.name;
             return false;
         }
