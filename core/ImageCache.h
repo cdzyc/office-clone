@@ -7,6 +7,7 @@
 #pragma once
 #include "Document.h"
 #include "PngDecode.h"
+#include "ZipReader.h"
 #include <functional>
 #include <list>
 #include <string>
@@ -21,6 +22,7 @@ public:
 
     explicit ImageCache(size_t byteBudget = 384ull * 1024 * 1024);
 
+    // 打开源文档：长驻 ZIP 句柄（索引模式）——取图无重开 IO 放大（P0 修复）
     void setSource(const std::string& docxPath, const Document* doc);
     void setExternalDecoder(ExternalDecoder dec) { external_ = std::move(dec); }
 
@@ -30,6 +32,7 @@ public:
     struct Stats {
         size_t hits = 0, misses = 0, evictions = 0, unsupported = 0, decodeErrors = 0;
         size_t bytesCached = 0, entries = 0;
+        double lastReadMs = 0, lastDecodeMs = 0;      // 取图耗时画像（调优用）
     };
     const Stats& stats() const { return st_; }
     size_t byteBudget() const { return budget_; }
@@ -47,6 +50,8 @@ private:
     std::unordered_map<std::string, std::list<Entry>::iterator> map_;
     std::string srcPath_;
     const Document* doc_ = nullptr;
+    ZipReader zip_;                                       // 长驻句柄（索引模式）
+    bool zipOk_ = false;
     ExternalDecoder external_;
     Stats st_;
 };
