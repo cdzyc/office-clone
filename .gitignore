@@ -1,0 +1,21 @@
+# 测试二进制（CI / 本地重新编译生成）
+core_tests
+m2_tests
+m3_tests
+bench
+perf_suite
+realdoc_test
+realdoc_edit_test
+realdoc_edit_perf
+*.o
+*.obj
+*.exe
+
+# 测试夹具（由 tests/make_fixtures.py / make_big_docx.py 生成）
+tests/data/
+
+# 构建 / IDE
+build*/
+.vscode/
+.idea/
+.DS_Store
