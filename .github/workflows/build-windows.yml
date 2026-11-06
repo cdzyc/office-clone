@@ -55,9 +55,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: office-clone-windows-x64
-          path: |
-            build/Release/*.exe
-            build/Release/*.dll
+          path: build/Release/        # 整目录（含 platforms/styles 等插件子目录）
           retention-days: 30
 
       - name: Upload test report artifacts
