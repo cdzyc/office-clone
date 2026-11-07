@@ -70,6 +70,7 @@ if (OC_BUILD_QT)
     add_executable(office-clone WIN32
         app/main.cpp
         app/MainWindow.cpp
+        app/LogPanel.cpp
         app/PageView.cpp
     )
     target_link_libraries(office-clone PRIVATE Qt6::Widgets oc_core)
