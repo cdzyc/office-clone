@@ -61,6 +61,7 @@ private:
         QFont font;
     };
     void rebuildLayout();               // 全量布局（编辑后调用；千段级毫秒）
+    void updateScrollRange();           // 滚动条范围同步
     void ensureVisible(qreal docY);     // 滚动到文档坐标
     int hitPara(qreal docY) const;      // y → 段索引（-1 无）
     DocPos hitPos(const QPointF& docPt) const;   // 点 → DocPos
