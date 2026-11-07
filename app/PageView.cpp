@@ -32,6 +32,40 @@ Qt::Alignment alignFor(const oc::Paragraph& p) {
     }
 }
 
+// run 富格式 → QTextLayout::FormatRange 列表（字符级：B/I/U/字号/字体真实可见）
+QVector<QTextLayout::FormatRange> formatsFor(const oc::Paragraph& p, const QFont& base) {
+    QVector<QTextLayout::FormatRange> ranges;
+    ranges.reserve((int)p.runs.size());
+    int charPos = 0;
+    bool any = false;
+    for (const auto& r : p.runs) {
+        int chars = (int)QString::fromStdString(r.text).size();
+        if (chars == 0) continue;
+        QTextCharFormat fmt;
+        bool diff = false;
+        QFont f = base;
+        if (r.bold)      { f.setBold(true); diff = true; }
+        if (r.italic)    { f.setItalic(true); diff = true; }
+        if (r.underline) { f.setUnderline(true); diff = true; }
+        if (r.fontSizePt > 0) { f.setPointSizeF(r.fontSizePt); diff = true; }
+        if (!r.fontEastAsia.empty()) { f.setFamily(QString::fromStdString(r.fontEastAsia)); diff = true; }
+        else if (!r.fontAscii.empty()) { f.setFamily(QString::fromStdString(r.fontAscii)); diff = true; }
+        if (diff) {
+            fmt.setFont(f);
+            fmt.setFontFamilies(QStringList() << f.family());
+            QTextLayout::FormatRange fr;
+            fr.start = charPos;
+            fr.length = chars;
+            fr.format = fmt;
+            ranges.append(fr);
+            any = true;
+        }
+        charPos += chars;
+    }
+    if (!any) ranges.clear();
+    return ranges;
+}
+
 } // namespace
 
 PageView::PageView(QWidget* parent) : QAbstractScrollArea(parent) {
@@ -81,6 +115,8 @@ void PageView::rebuildLayout() {
 
         b.layout = std::make_unique<QTextLayout>(text, b.font);
         b.layout->setTextOption(QTextOption(alignFor(*p)));
+        // 字符级富格式（B/I/U/字号/字体）真实渲染
+        b.layout->setFormats(formatsFor(*p, b.font));
         b.layout->beginLayout();
         forever {
             QTextLine line = b.layout->createLine();
@@ -281,6 +317,7 @@ void PageView::mousePressEvent(QMouseEvent* e) {
     cursor_ = pos;
     mouseDragging_ = true;
     viewport()->update();
+    emit cursorMoved();
 }
 
 void PageView::mouseMoveEvent(QMouseEvent* e) {
@@ -288,6 +325,7 @@ void PageView::mouseMoveEvent(QMouseEvent* e) {
     QPointF docPt(e->pos().x(), e->pos().y() + verticalScrollBar()->value());
     cursor_ = hitPos(docPt);
     viewport()->update();
+    emit cursorMoved();
 }
 
 void PageView::mouseReleaseEvent(QMouseEvent*) {
@@ -410,7 +448,12 @@ void PageView::keyPressEvent(QKeyEvent* e) {
     }
     anchor_ = anchor_ == cursor_ ? cursor_ : anchor_;
     relayoutAndKeepCursor();
-    emit edited();
+    emit cursorMoved();
+    // 纯移动键不标 dirty（Backspace/Delete/Return/输入已改文档；移动键无编辑）
+    if (e->key() != Qt::Key_Left && e->key() != Qt::Key_Right &&
+        e->key() != Qt::Key_Up && e->key() != Qt::Key_Down &&
+        e->key() != Qt::Key_Home && e->key() != Qt::Key_End)
+        emit edited();
 }
 
 void PageView::inputMethodEvent(QInputMethodEvent* e) {
@@ -498,6 +541,98 @@ bool PageView::boldSelection(bool val) {
     relayoutAndKeepCursor();
     emit edited();
     return true;
+}
+
+bool PageView::italicSelection(bool val) {
+    if (!ed_) return false;
+    const bool hasSel = !(anchor_ == cursor_);
+    if (hasSel) {
+        DocPos a = anchor_ < cursor_ ? anchor_ : cursor_;
+        DocPos b = cursor_ < anchor_ ? anchor_ : cursor_;
+        ed_->setItalic(a, b, val);
+    } else ed_->setItalic(cursor_, cursor_, val);
+    relayoutAndKeepCursor();
+    emit edited();
+    return true;
+}
+
+bool PageView::underlineSelection(bool val) {
+    if (!ed_) return false;
+    const bool hasSel = !(anchor_ == cursor_);
+    if (hasSel) {
+        DocPos a = anchor_ < cursor_ ? anchor_ : cursor_;
+        DocPos b = cursor_ < anchor_ ? anchor_ : cursor_;
+        ed_->setUnderline(a, b, val);
+    } else ed_->setUnderline(cursor_, cursor_, val);
+    relayoutAndKeepCursor();
+    emit edited();
+    return true;
+}
+
+bool PageView::fontSizeSelection(double pt) {
+    if (!ed_ || pt < 4 || pt > 200) return false;
+    const bool hasSel = !(anchor_ == cursor_);
+    if (hasSel) {
+        DocPos a = anchor_ < cursor_ ? anchor_ : cursor_;
+        DocPos b = cursor_ < anchor_ ? anchor_ : cursor_;
+        ed_->setFontSize(a, b, pt);
+    } else ed_->setFontSize(cursor_, cursor_, pt);
+    relayoutAndKeepCursor();
+    emit edited();
+    return true;
+}
+
+bool PageView::fontNameSelection(const QString& family) {
+    if (!ed_) return false;
+    const std::string n = family.toStdString();
+    const bool hasSel = !(anchor_ == cursor_);
+    if (hasSel) {
+        DocPos a = anchor_ < cursor_ ? anchor_ : cursor_;
+        DocPos b = cursor_ < anchor_ ? anchor_ : cursor_;
+        ed_->setFontName(a, b, n, n);
+    } else ed_->setFontName(cursor_, cursor_, n, n);
+    relayoutAndKeepCursor();
+    emit edited();
+    return true;
+}
+
+bool PageView::paraStyleSelection(const QString& styleId) {
+    if (!ed_) return false;
+    ed_->setParaStyle(cursor_.para, styleId.toStdString());
+    relayoutAndKeepCursor();
+    emit edited();
+    return true;
+}
+
+bool PageView::alignSelection(int align) {
+    if (!ed_) return false;
+    oc::Align a = align == 1 ? oc::Align::Center
+               : align == 2 ? oc::Align::Right
+               : align == 3 ? oc::Align::Justify
+               : oc::Align::Left;
+    ed_->setAlign(cursor_.para, a);
+    relayoutAndKeepCursor();
+    emit edited();
+    return true;
+}
+
+PageView::FormatHints PageView::formatHints() const {
+    FormatHints h;
+    if (!ed_) return h;
+    h.hasDoc = true;
+    const oc::Paragraph* p = ed_->paragraphAt(cursor_.para);
+    if (!p) return h;
+    h.styleId = QString::fromStdString(p->styleId);
+    h.align = (int)p->align;
+    if (!p->runs.empty()) {
+        const auto& r = p->runs[std::min(cursor_.run, p->runs.size() - 1)];
+        h.bold = r.bold;
+        h.italic = r.italic;
+        h.underline = r.underline;
+        h.sizePt = r.fontSizePt;
+        h.eastAsia = QString::fromStdString(r.fontEastAsia);
+    }
+    return h;
 }
 
 void PageView::copySelection() {
