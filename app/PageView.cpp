@@ -209,8 +209,8 @@ void PageView::paintEvent(QPaintEvent*) {
         if (!para) continue;
 
         // 选区高亮（段落文本范围）
-        bool selStart = anchor_ < cursor_ ? anchor_ : cursor_;
-        bool selEnd = cursor_ < anchor_ ? anchor_ : cursor_;
+        DocPos selStart = anchor_ < cursor_ ? anchor_ : cursor_;
+        DocPos selEnd = cursor_ < anchor_ ? anchor_ : cursor_;
         // 简化选区渲染：仅当本段在选区内画整段底色（细化到字符 M3）
         bool paraInSel = (selStart.para <= (size_t)b.flat && (size_t)b.flat <= selEnd.para)
                          && !(anchor_ == cursor_);
