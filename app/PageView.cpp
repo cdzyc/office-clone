@@ -154,14 +154,18 @@ void PageView::rebuildLayout() {
             size_t cols = t.colWidthsDxa.size();
             for (const auto& row : t.rows) cols = std::max(cols, row.cells.size());
             if (cols == 0) { ++flat; continue; }
-            for (size_t c = 0; c < cols; ++c) {
-                qreal w = (t.colWidthsDxa.size() == cols)
-                              ? textW * t.colWidthsDxa[c] / (dxaSum > 0 ? dxaSum : 1)
-                              : textW / cols;
-                tb.colX.push_back(textMarginX_ + (tb.colW.empty() ? 0 : tb.colW.back() + w));
-                tb.colW.push_back(w);
+            // 列几何：正确累计起点（colX[c] = 前列右缘）
+            {
+                qreal x = textMarginX_;
+                for (size_t c = 0; c < cols; ++c) {
+                    qreal w = (t.colWidthsDxa.size() == cols)
+                                  ? textW * t.colWidthsDxa[c] / (dxaSum > 0 ? dxaSum : 1)
+                                  : textW / cols;
+                    tb.colX.push_back(x);
+                    tb.colW.push_back(w);
+                    x += w;
+                }
             }
-            tb.y = docHeight_;
             // 行高 = 各 cell 段落最高者 + padding
             const int pad = 4;
             for (const auto& row : t.rows) {
