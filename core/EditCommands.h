@@ -7,6 +7,7 @@
 #include "Clipboard.h"
 #include "CommandStack.h"
 #include "Document.h"
+#include <functional>
 
 namespace oc {
 
@@ -42,7 +43,14 @@ public:
     bool splitParagraph(DocPos pos);
     // 同段范围设置粗体
     bool setBold(DocPos from, DocPos to, bool val);
-    // 段落对齐
+    // 同段范围：斜体/下划线/字号(pt)/字体(eastAsia+ascii)——字符级（自动拆分 runs）
+    bool setItalic(DocPos from, DocPos to, bool val);
+    bool setUnderline(DocPos from, DocPos to, bool val);
+    bool setFontSize(DocPos from, DocPos to, double pt);
+    bool setFontName(DocPos from, DocPos to, const std::string& eastAsia,
+                     const std::string& ascii);
+    // 段落样式（正文/标题1…）与对齐
+    bool setParaStyle(size_t flatPara, const std::string& styleId);
     bool setAlign(size_t flatPara, Align a);
 
     // ---- 剪贴板（M2.6）----
@@ -56,6 +64,9 @@ public:
     static DocPos endOf(size_t flatPara, const Document& doc);// 段落末尾位置
 
 private:
+    // 字符级格式通用实现（选区∩run 求交 + 相邻同格式合并；命令化可撤销）
+    bool formatRange(DocPos from, DocPos to,
+                     const std::function<void(TextRun&)>& mutate, const char* name);
     struct ParaLoc {
         Node* node = nullptr;
         Paragraph* p = nullptr;
