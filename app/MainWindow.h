@@ -5,6 +5,10 @@
 #include <memory>
 
 class QLabel;
+class QComboBox;
+class QFontComboBox;
+class QToolButton;
+class QActionGroup;
 
 namespace oc {
 class CommandStack;
@@ -32,9 +36,11 @@ private slots:
     void onLoaded(std::shared_ptr<oc::Document> doc, double ms, const QString& err,
                   const std::vector<std::string>& warnings);
     void onEdited();
+    void syncToolbar();                  // 光标移动后同步工具栏状态
 
 private:
     void buildMenu();
+    void buildToolbar();
     bool writeDocxTo(const QString& targetPath);
 
     // 保存时的媒体搬运（从源 docx 长驻句柄读——函数指针桥）
@@ -46,6 +52,17 @@ private:
     LogPanel* logPanel_ = nullptr;            // 右下角日志框
     QLabel* infoCard_ = nullptr;              // 右上：文档速览
     QLabel* status_ = nullptr;
+
+    // 工具栏控件
+    QComboBox* styleCombo_ = nullptr;
+    QFontComboBox* fontCombo_ = nullptr;
+    QComboBox* sizeCombo_ = nullptr;
+    QToolButton* boldBtn_ = nullptr;
+    QToolButton* italicBtn_ = nullptr;
+    QToolButton* underlineBtn_ = nullptr;
+    QActionGroup* alignGroup_ = nullptr;
+    QList<QAction*> alignActs_;
+    bool syncingToolbar_ = false;
 
     std::shared_ptr<oc::Document> doc_;       // 可编辑文档
     std::unique_ptr<oc::CommandStack> stack_;
