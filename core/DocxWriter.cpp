@@ -1,5 +1,6 @@
 #include "DocxWriter.h"
 #include "ZipWriter.h"
+#include "PlatformIO.h"
 #include "DocxReader.h"
 #include <algorithm>
 #include <cinttypes>
@@ -223,7 +224,7 @@ DocxWriteResult DocxWriter::write(const std::string& path, const Document& doc,
 
     if (!zw.finalize(&r.error)) return r;
 
-    FILE* f = fopen(path.c_str(), "rb");
+    FILE* f = oc::fopenUtf8(path, "rb");
     if (f) { fseek(f, 0, SEEK_END); r.writtenBytes = (uint64_t)ftell(f); fclose(f); }
     r.ok = true;
     return r;
