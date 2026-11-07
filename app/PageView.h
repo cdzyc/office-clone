@@ -75,9 +75,15 @@ private:
     struct ParaBox {                    // 段落布局缓存
         int flat = -1;
         std::unique_ptr<QTextLayout> layout;
-        qreal y = 0, h = 0;             // 文档流纵坐标
+        qreal y = 0, h = 0, x = 0;      // x：文本绘制左缘（表格内段落有列偏移）
         QVector<QTextLine> lines;
         QFont font;
+    };
+    struct TableBox {                   // 表格（真机战报 #3：WPS 可见表格必须渲染）
+        qreal y = 0, h = 0, w = 0;
+        std::vector<qreal> colX, colW;  // 列起点/列宽
+        std::vector<int> headerParas;   // 首行段落（浅蓝底）
+        std::vector<int> allParas;      // 全部 cell 段落 flat
     };
     void rebuildLayout();               // 全量布局（编辑后调用；千段级毫秒）
     void updateScrollRange();           // 滚动条范围同步
@@ -89,13 +95,12 @@ private:
     DocPos endOfPara(size_t flat) const;
     void relayoutAndKeepCursor();
     QString paraText(size_t flat) const;
-
-    std::shared_ptr<const oc::Document> doc_;
-    oc::DocumentEditor* ed_ = nullptr;
-    oc::CommandStack* cs_ = nullptr;
-
-    // 布局（简单起见：全量缓存向量——标书万段级 QTextLayout 内存可控于视口外段落退化）
+    // 大纲导航：滚动到指定段
+public:
+    void scrollToPara(size_t flat);
+private:
     std::vector<ParaBox> boxes_;
+    std::vector<TableBox> tables_;
     qreal docHeight_ = 0;
     int textMarginX_ = 48, topPad_ = 24, lineGap_ = 4, paraGap_ = 10;
 
