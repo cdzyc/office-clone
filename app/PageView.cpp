@@ -96,45 +96,102 @@ void PageView::attachEditor(oc::DocumentEditor* ed, oc::CommandStack* cs) {
 
 void PageView::rebuildLayout() {
     boxes_.clear();
+    tables_.clear();
     docHeight_ = topPad_;
     if (!doc_) {
         updateScrollRange();
         return;
     }
-    // 编辑视图：全量段落布局（编辑后调用；2 万段实测毫秒级，动态视口裁剪只作用于绘制）
-    const size_t n = ed_ ? ed_->paragraphCount() : 0;
-    for (size_t i = 0; i < n; ++i) {
-        const oc::Paragraph* p = ed_ ? ed_->paragraphAt(i) : nullptr;
-        if (!p) break;
-        ParaBox b;
-        b.flat = (int)i;
+    // 文档流布局：遍历 body 节点（段落 + 表格）。flat 编址与 DocumentEditor 一致。
+    const qreal textW = qreal(std::max(160, viewport()->width() - 2 * textMarginX_));
+    size_t flat = 0;
+
+    auto layoutParagraph = [&](const oc::Paragraph* p, size_t flatIdx, qreal x, qreal width,
+                               qreal y, ParaBox& b) -> qreal {
+        b.flat = (int)flatIdx;
+        b.x = x;
         b.font = fontFor(*p, font());
         QString text;
         for (const auto& r : p->runs) text += QString::fromStdString(r.text);
         if (!p->images.empty()) text += QStringLiteral(" ▣图片%1 ").arg(p->images.size());
-
         b.layout = std::make_unique<QTextLayout>(text, b.font);
         b.layout->setTextOption(QTextOption(alignFor(*p)));
-        // 字符级富格式（B/I/U/字号/字体）真实渲染
         b.layout->setFormats(formatsFor(*p, b.font));
         b.layout->beginLayout();
         forever {
             QTextLine line = b.layout->createLine();
             if (!line.isValid()) break;
-            line.setLineWidth(qreal(std::max(120, viewport()->width() - 2 * textMarginX_)));
-            line.setPosition(QPointF(0, 0));
+            line.setLineWidth(width);
             b.lines.append(line);
         }
         b.layout->endLayout();
-        // 段高 = 行高 + 行距
-        qreal textW = 0;
-        for (const auto& l : b.lines) textW = std::max(textW, l.height());
-        b.h = b.lines.size() * (b.layout->lineCount() ? b.lines[0].height() : 18)
-              + (b.lines.size() ? lineGap_ * (b.lines.size()) : 0)
-              + paraGap_;
-        b.y = docHeight_;
-        docHeight_ += b.h;
-        boxes_.push_back(std::move(b));
+        // ⚠️ 逐行纵向定位（修复真机战报 #2：行叠画）
+        qreal lineY = 0;
+        for (auto& l : b.lines) {
+            l.setPosition(QPointF(0, lineY));
+            lineY += l.height() + lineGap_;
+        }
+        b.h = qMax(lineY - lineGap_, 18.0) + paraGap_;
+        b.y = y;
+        return b.h;
+    };
+
+    for (const auto& node : doc_->body) {
+        if (node.kind == oc::Node::Kind::Paragraph) {
+            ParaBox b;
+            layoutParagraph(&node.paragraph, flat, textMarginX_, textW, docHeight_, b);
+            docHeight_ += b.h;
+            boxes_.push_back(std::move(b));
+            ++flat;
+        } else {
+            // ---- 表格（真机战报 #3：必须渲染）----
+            const oc::Table& t = node.table;
+            TableBox tb;
+            tb.w = textW;
+            // 列宽：按 colWidthsDxa 比例（缺失时均分）
+            qreal dxaSum = 0;
+            for (uint32_t w : t.colWidthsDxa) dxaSum += w;
+            size_t cols = t.colWidthsDxa.size();
+            for (const auto& row : t.rows) cols = std::max(cols, row.cells.size());
+            if (cols == 0) { ++flat; continue; }
+            for (size_t c = 0; c < cols; ++c) {
+                qreal w = (t.colWidthsDxa.size() == cols)
+                              ? textW * t.colWidthsDxa[c] / (dxaSum > 0 ? dxaSum : 1)
+                              : textW / cols;
+                tb.colX.push_back(textMarginX_ + (tb.colW.empty() ? 0 : tb.colW.back() + w));
+                tb.colW.push_back(w);
+            }
+            tb.y = docHeight_;
+            // 行高 = 各 cell 段落最高者 + padding
+            const int pad = 4;
+            for (const auto& row : t.rows) {
+                qreal rowH = 22;
+                qreal cellY = docHeight_ + pad;
+                qreal colStart = 0;
+                for (size_t c = 0; c < row.cells.size() && c < cols; ++c) {
+                    const oc::TableCell& cell = row.cells[c];
+                    qreal colSpanW = tb.colW[c];
+                    qreal y = cellY;
+                    for (const auto& p : cell.paragraphs) {
+                        ParaBox b;
+                        qreal usedW = std::max(40.0, tb.colW[c] - 2 * pad);
+                        layoutParagraph(&p, flat, tb.colX[c] + pad, usedW, y, b);
+                        y += b.h;
+                        boxes_.push_back(std::move(b));
+                        tb.allParas.push_back((int)flat);
+                        if (&row == &t.rows.front())
+                            tb.headerParas.push_back((int)flat);
+                        ++flat;
+                    }
+                    rowH = std::max(rowH, y - docHeight_ + pad);
+                }
+                docHeight_ = std::max(docHeight_, cellY - pad + rowH);
+                (void)colStart;
+            }
+            tb.h = docHeight_ - tb.y + 6;
+            tables_.push_back(std::move(tb));
+            docHeight_ += 10;
+        }
     }
     docHeight_ += topPad_;
     updateScrollRange();
@@ -166,15 +223,14 @@ DocPos PageView::hitPos(const QPointF& docPt) const {
     int bi = hitPara(docPt.y());
     if (bi < 0 || bi >= (int)boxes_.size()) return pos;
     const ParaBox& b = boxes_[(size_t)bi];
-    // 行内命中
-    int lineIdx = 0;
-    for (int li = 0; li < b.lines.size(); ++li) {
-        qreal lh = b.lines[(qsizetype)li].height() + lineGap_;
-        if (docPt.y() < b.y + (li + 1) * lh) { lineIdx = li; break; }
-        lineIdx = li;
-    }
-    QTextLine line = b.lines[lineIdx];
-    int charPos = line.xToCursor(docPt.x() - textMarginX_, QTextLine::CursorOnCharacter);
+    // 行内命中：用真实行位置（修复叠画后行 y 有效）
+    QTextLine hitLine;
+    for (const auto& l : b.lines)
+        if (docPt.y() - b.y < l.y() + l.height() + lineGap_) { hitLine = l; break; }
+    if (!hitLine.isValid() && !b.lines.isEmpty()) hitLine = b.lines.last();
+    int charPos = hitLine.isValid()
+                      ? hitLine.xToCursor(docPt.x() - b.x, QTextLine::CursorOnCharacter)
+                      : 0;
     // charPos（QString 字符下标）→ (run, off) UTF-8 字节偏移
     const oc::Paragraph* p = ed_->paragraphAt((size_t)b.flat);
     pos.para = (size_t)b.flat;
@@ -238,6 +294,23 @@ void PageView::paintEvent(QPaintEvent*) {
     const int scrollY = verticalScrollBar()->value();
     const int W = viewport()->width();
 
+    // ---- 表格（先画底：网格 + 表头底色，文本由段落盒层叠其上）----
+    for (const auto& tb : tables_) {
+        if (tb.y + tb.h < scrollY - 100 || tb.y > scrollY + viewport()->height() + 100)
+            continue;
+        QRectF rect(textMarginX_, tb.y - scrollY, tb.w, tb.h);
+        // 表头底色（首行）
+        p.fillRect(rect.adjusted(0, 0, 0, -(tb.h - 24 > 0 ? tb.h - 24 : 0)),
+                   QColor(0xEA, 0xF1, 0xF9));
+        // 网格
+        p.setPen(QPen(QColor(0xB8, 0xC4, 0xD4), 1));
+        p.drawRect(rect);
+        for (size_t c = 0; c + 1 < tb.colX.size(); ++c) {
+            qreal x = tb.colX[c] + tb.colW[c];
+            p.drawLine(QPointF(x, rect.top()), QPointF(x, rect.bottom()));
+        }
+    }
+
     for (const auto& b : boxes_) {
         if (b.y + b.h < scrollY - 100 || b.y > scrollY + viewport()->height() + 100)
             continue;                                    // 视口裁剪
@@ -257,7 +330,7 @@ void PageView::paintEvent(QPaintEvent*) {
 
         // 文本（含每 run 富格式：逐 run 分段绘制会破坏整段断行——首版整段用统一字体，
         // 富格式（加粗等）视觉从 M2.5+ 的 QTextLayout setFormats 接入）
-        b.layout->draw(&p, QPointF(textMarginX_, b.y - scrollY));
+        b.layout->draw(&p, QPointF(b.x, b.y - scrollY));
 
         // 图片占位（段内含图）
         if (!para->images.empty()) {
@@ -268,27 +341,26 @@ void PageView::paintEvent(QPaintEvent*) {
         }
     }
 
-    // 光标（闪烁；选区拖拽时也显示）
+    // 光标（闪烁；字符级行定位——真机战报 #2 修复：光标在光标所在行，不再固定首行）
     if (cursorVisible_ && hasFocus()) {
         for (const auto& b : boxes_) {
             if ((size_t)b.flat != cursor_.para) continue;
-            // 光标行/位置（字符级 M3：当前画在段首行尾近似）
-            qreal y = b.y - scrollY;
-            qreal lh = b.lines.isEmpty() ? 18 : b.lines[0].height();
-            // 光标 x：run 内偏移 → 整段字符位 → 行内 x
-            int charPos = 0;
             const oc::Paragraph* para = ed_->paragraphAt(cursor_.para);
+            int charPos = 0;
             if (para) {
                 for (size_t r = 0; r < cursor_.run && r < para->runs.size(); ++r)
                     charPos += QString::fromStdString(para->runs[r].text).size();
                 charPos += QString::fromStdString(
                                para->runs[cursor_.run].text).left(int(cursor_.off)).size();
             }
-            qreal cx = textMarginX_;
-            if (!b.lines.isEmpty())
-                cx += b.lines[0].cursorToX(charPos);
-            p.setPen(QColor(0x20, 0x20, 0x20));
-            p.drawLine(QPointF(cx, y + 1), QPointF(cx, y + lh + 1));
+            QTextLine line = b.layout->lineForTextPosition(charPos);
+            if (!line.isValid() && !b.lines.isEmpty()) line = b.lines.last();
+            if (line.isValid()) {
+                qreal cx = b.x + line.cursorToX(charPos);
+                qreal cy = b.y - scrollY + line.y();
+                p.setPen(QColor(0x20, 0x20, 0x20));
+                p.drawLine(QPointF(cx, cy + 1), QPointF(cx, cy + line.height() + 1));
+            }
             break;
         }
     }
@@ -335,6 +407,7 @@ void PageView::mouseReleaseEvent(QMouseEvent*) {
 void PageView::keyPressEvent(QKeyEvent* e) {
     if (!ed_ || !cs_) { QAbstractScrollArea::keyPressEvent(e); return; }
     const bool hasSel = !(anchor_ == cursor_);
+    const bool keepAnchor = (e->modifiers() & Qt::ShiftModifier) != 0;   // Shift+方向键扩选
     DocPos selStart = anchor_ < cursor_ ? anchor_ : cursor_;
     DocPos selEnd = cursor_ < anchor_ ? anchor_ : cursor_;
 
@@ -388,7 +461,7 @@ void PageView::keyPressEvent(QKeyEvent* e) {
         ++cursor_.para; cursor_.run = 0; cursor_.off = 0;
         break;
     case Qt::Key_Left: {
-        if (hasSel) { cursor_ = selStart; anchor_ = cursor_; }
+        if (hasSel && !keepAnchor) { cursor_ = selStart; }
         else if (cursor_.off > 0) {
             const std::string& t = ed_->paragraphAt(cursor_.para)->runs[cursor_.run].text;
             size_t off = cursor_.off - 1;
@@ -401,11 +474,11 @@ void PageView::keyPressEvent(QKeyEvent* e) {
             --cursor_.para;
             cursor_ = endOfPara(cursor_.para);
         }
-        anchor_ = cursor_;
+        if (!keepAnchor) anchor_ = cursor_;
         break;
     }
     case Qt::Key_Right: {
-        if (hasSel) { cursor_ = selEnd; anchor_ = cursor_; }
+        if (hasSel && !keepAnchor) { cursor_ = selEnd; }
         else {
             const oc::Paragraph* p = ed_->paragraphAt(cursor_.para);
             const std::string& t = p->runs[cursor_.run].text;
@@ -419,21 +492,21 @@ void PageView::keyPressEvent(QKeyEvent* e) {
                 ++cursor_.para; cursor_.run = 0; cursor_.off = 0;
             }
         }
-        anchor_ = cursor_;
+        if (!keepAnchor) anchor_ = cursor_;
         break;
     }
     case Qt::Key_Up:
         if (cursor_.para > 0) { --cursor_.para; cursor_ = endOfPara(cursor_.para); }
-        anchor_ = cursor_;
+        if (!keepAnchor) anchor_ = cursor_;
         break;
     case Qt::Key_Down:
         if (cursor_.para + 1 < ed_->paragraphCount()) {
             ++cursor_.para; cursor_.run = 0; cursor_.off = 0;
         }
-        anchor_ = cursor_;
+        if (!keepAnchor) anchor_ = cursor_;
         break;
-    case Qt::Key_Home: cursor_.run = 0; cursor_.off = 0; anchor_ = cursor_; break;
-    case Qt::Key_End: cursor_ = endOfPara(cursor_.para); anchor_ = cursor_; break;
+    case Qt::Key_Home: cursor_.run = 0; cursor_.off = 0; if (!keepAnchor) anchor_ = cursor_; break;
+    case Qt::Key_End: cursor_ = endOfPara(cursor_.para); if (!keepAnchor) anchor_ = cursor_; break;
     default:
         // 普通文本输入（ASCII/直接键入；中文走 inputMethodEvent）
         if (!e->text().isEmpty()) {
@@ -681,6 +754,18 @@ void PageView::selectAll() {
     anchor_ = DocPos{};
     cursor_ = endOfPara(ed_->paragraphCount() - 1);
     viewport()->update();
+}
+
+void PageView::scrollToPara(size_t flat) {
+    for (const auto& b : boxes_)
+        if ((size_t)b.flat == flat) {
+            verticalScrollBar()->setValue((int)b.y - 60);
+            cursor_ = DocPos{flat, 0, 0};
+            anchor_ = cursor_;
+            viewport()->update();
+            emit cursorMoved();
+            return;
+        }
 }
 
 void PageView::moveCursorToStart() {
