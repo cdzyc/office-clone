@@ -190,8 +190,17 @@ static void testCommandStack() {
 
 static void testChinesePath(const std::string& dataDir) {
     // 真机战报 #1：Windows 下中文文件名打开失败（fopen ANSI 代码页 vs UTF-8 路径）
-    // 回归：中文目录 + 中文文件名的读 + 写 round-trip 必须成功
+    // 注意：MSVC 的 path::string() 返回 ANSI 编码（中文会变 ??）——必须用 u8string() 桥接，
+    // core 层的路径约定统一为 UTF-8。
     namespace fs = std::filesystem;
+    auto u8 = [](const fs::path& p) -> std::string {
+#ifdef _WIN32
+        auto s = p.u8string();                     // std::u8string（真 UTF-8）
+        return std::string(s.begin(), s.end());
+#else
+        return p.string();                         // POSIX 原生即 UTF-8
+#endif
+    };
     try {
         fs::path dir = fs::path(dataDir) / "中文目录_测试";
         fs::create_directories(dir);
@@ -201,16 +210,16 @@ static void testChinesePath(const std::string& dataDir) {
 
         // 读
         Document doc;
-        DocxReadResult r = DocxReader::read(dst.string(), doc);
+        DocxReadResult r = DocxReader::read(u8(dst), doc);
         CHECK(r.ok, ("chinese path read: " + r.error).c_str());
         CHECK(r.ok && doc.stats.paragraphs == 9, "chinese path content ok");
 
         // 写回（写路径同样要求中文安全）
-        DocxWriteResult w = DocxWriter::write((dir / "写回_输出.docx").string(), doc);
+        fs::path out = dir / "写回_输出.docx";
+        DocxWriteResult w = DocxWriter::write(u8(out), doc);
         CHECK(w.ok, "chinese path write ok");
         Document doc2;
-        CHECK(DocxReader::read((dir / "写回_输出.docx").string(), doc2).ok,
-              "chinese path reread ok");
+        CHECK(DocxReader::read(u8(out), doc2).ok, "chinese path reread ok");
     } catch (const std::exception& e) {
         printf("  fs error: %s\n", e.what());
         CHECK(false, "chinese path fs setup");
