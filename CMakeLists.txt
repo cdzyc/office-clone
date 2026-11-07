@@ -15,6 +15,7 @@ add_library(oc_core STATIC
     core/Deflate.cpp
     core/ZipReader.cpp
     core/ZipWriter.cpp
+    core/PlatformIO.cpp
     core/XmlPull.cpp
     core/Document.cpp
     core/DocxReader.cpp
