@@ -293,22 +293,116 @@ bool DocumentEditor::splitParagraph(DocPos pos) {
 }
 
 bool DocumentEditor::setBold(DocPos from, DocPos to, bool val) {
+    return formatRange(from, to,
+        [val](TextRun& r) { r.bold = val; }, "bold");
+}
+
+bool DocumentEditor::setItalic(DocPos from, DocPos to, bool val) {
+    return formatRange(from, to,
+        [val](TextRun& r) { r.italic = val; }, "italic");
+}
+
+bool DocumentEditor::setUnderline(DocPos from, DocPos to, bool val) {
+    return formatRange(from, to,
+        [val](TextRun& r) { r.underline = val; }, "underline");
+}
+
+bool DocumentEditor::setFontSize(DocPos from, DocPos to, double pt) {
+    if (pt < 4 || pt > 200) return false;
+    return formatRange(from, to,
+        [pt](TextRun& r) { r.fontSizePt = pt; }, "fontsize");
+}
+
+bool DocumentEditor::setFontName(DocPos from, DocPos to, const std::string& eastAsia,
+                                 const std::string& ascii) {
+    return formatRange(from, to,
+        [&](TextRun& r) { r.fontEastAsia = eastAsia; r.fontAscii = ascii; }, "fontname");
+}
+
+// 字符级格式通用实现：选区与各 run 求交，交集副本应用变更，相邻同格式合并。
+// 全部走 CommandStack（段落快照 undo）。
+bool DocumentEditor::formatRange(DocPos from, DocPos to,
+                                 const std::function<void(TextRun&)>& mutate,
+                                 const char* name) {
     if (from.para != to.para || to < from) return false;
     ParaLoc loc = locate(from.para);
     if (!loc.p) return false;
     Paragraph* p = loc.p;
+    if (p->runs.empty()) return from.run == 0 && to.run == 0 && from.off == 0 && to.off == 0;
 
-    RunList oldRuns = p->runs;
-    // 范围内 run 设置（整 run 粒度——M2 够用；run 内部分范围 M3 细化）
-    for (size_t i = from.run; i <= to.run && i < p->runs.size(); ++i)
-        p->runs[i].bold = val;
-    RunList newRuns = p->runs;
+    // 字符区间边界（UTF-8 字节偏移 → 累计字符数）
+    auto runStartByte = [&](size_t idx) {
+        size_t s = 0;
+        for (size_t i = 0; i < idx; ++i) s += p->runs[i].text.size();
+        return s;
+    };
+    size_t selStart = runStartByte(from.run) + from.off;
+    size_t selEnd   = runStartByte(to.run) + to.off;
 
+    RunList after;
+    size_t cur = 0;
+    for (const auto& r : p->runs) {
+        size_t rStart = cur, rEnd = cur + r.text.size();
+        // 三段：前缀 / 交集 / 后缀
+        if (rEnd <= selStart || rStart >= selEnd) {
+            after.push_back(r);                          // 与选区无交
+        } else {
+            if (rStart < selStart) {
+                TextRun head = r;
+                head.text = r.text.substr(0, selStart - rStart);
+                after.push_back(head);
+            }
+            {
+                TextRun mid = r;
+                size_t is = std::max(rStart, selStart), ie = std::min(rEnd, selEnd);
+                mid.text = r.text.substr(is - rStart, ie - is);
+                mutate(mid);
+                after.push_back(mid);
+            }
+            if (rEnd > selEnd) {
+                TextRun tail = r;
+                tail.text = r.text.substr(selEnd - rStart);
+                after.push_back(tail);
+            }
+        }
+        cur = rEnd;
+    }
+    // 合并相邻同格式（防 runs 碎片化）
+    RunList merged;
+    for (auto& r : after) {
+        if (!merged.empty() && r.text.empty()) continue;
+        if (r.text.empty()) continue;
+        if (!merged.empty()) {
+            TextRun& last = merged.back();
+            if (last.bold == r.bold && last.italic == r.italic &&
+                last.underline == r.underline && last.fontSizePt == r.fontSizePt &&
+                last.styleId == r.styleId && last.fontAscii == r.fontAscii &&
+                last.fontEastAsia == r.fontEastAsia) {
+                last.text += r.text;
+                continue;
+            }
+        }
+        merged.push_back(r);
+    }
+
+    RunList oldRuns = p->runs, newRuns = merged;
     size_t para = from.para;
     stack_.execute(CommandStack::makeCmd(
-        "bold",
+        name,
         [this, para, oldRuns] { if (Paragraph* pp = paragraphAt(para)) pp->runs = oldRuns; },
         [this, para, newRuns] { if (Paragraph* pp = paragraphAt(para)) pp->runs = newRuns; }));
+    return true;
+}
+
+bool DocumentEditor::setParaStyle(size_t flatPara, const std::string& styleId) {
+    ParaLoc loc = locate(flatPara);
+    if (!loc.p) return false;
+    std::string old = loc.p->styleId;
+    size_t para = flatPara;
+    stack_.execute(CommandStack::makeCmd(
+        "parastyle",
+        [this, para, old] { if (Paragraph* pp = paragraphAt(para)) pp->styleId = old; },
+        [this, para, styleId] { if (Paragraph* pp = paragraphAt(para)) pp->styleId = styleId; }));
     return true;
 }
 
