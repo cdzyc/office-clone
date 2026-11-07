@@ -24,6 +24,7 @@
 #include <QStatusBar>
 #include <QTextEdit>
 #include <QToolBar>
+#include <QTreeWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <chrono>
@@ -53,12 +54,24 @@ MainWindow::MainWindow() {
     rightSplit->setStretchFactor(1, 2);
     rightSplit->setSizes({140, 320});
 
+    outlineTree_ = new QTreeWidget(this);
+    outlineTree_->setHeaderLabel(tr("目录"));
+    outlineTree_->setMinimumWidth(150);
+    connect(outlineTree_, &QTreeWidget::itemClicked, this,
+            [this](QTreeWidgetItem* item, int) {
+                bool ok = false;
+                size_t flat = item->data(0, Qt::UserRole).toULongLong(&ok);
+                if (ok) view_->scrollToPara(flat);
+            });
+
     auto* mainSplit = new QSplitter(Qt::Horizontal, this);
+    mainSplit->addWidget(outlineTree_);
     mainSplit->addWidget(view_);
     mainSplit->addWidget(rightSplit);
-    mainSplit->setStretchFactor(0, 1);
-    mainSplit->setStretchFactor(1, 0);
-    mainSplit->setSizes({950, 330});
+    mainSplit->setStretchFactor(0, 0);
+    mainSplit->setStretchFactor(1, 1);
+    mainSplit->setStretchFactor(2, 0);
+    mainSplit->setSizes({200, 900, 320});
     setCentralWidget(mainSplit);
 
     status_ = new QLabel(tr("就绪"), this);
@@ -172,6 +185,24 @@ void MainWindow::buildToolbar() {
     sizeCombo_->setCurrentIndex(9);       // 小四默认
     sizeCombo_->setToolTip(tr("字号（中文字号）"));
     tb->addWidget(sizeCombo_);
+    // 字号增大/减小（WPS 风格）
+    auto* grow = new QToolButton(this);
+    grow->setText(tr("A⁺"));
+    grow->setToolTip(tr("增大字号"));
+    grow->setAutoRaise(true);
+    tb->addWidget(grow);
+    auto* shrink = new QToolButton(this);
+    shrink->setText(tr("A⁻"));
+    shrink->setToolTip(tr("减小字号"));
+    shrink->setAutoRaise(true);
+    tb->addWidget(shrink);
+    auto adjustSize = [this](double delta) {
+        auto h = view_->formatHints();
+        double cur = h.sizePt > 0 ? h.sizePt : 10.5;
+        view_->fontSizeSelection(qBound(6.0, cur + delta, 72.0));
+    };
+    connect(grow, &QToolButton::clicked, this, [adjustSize]() { adjustSize(2.0); });
+    connect(shrink, &QToolButton::clicked, this, [adjustSize]() { adjustSize(-2.0); });
     connect(sizeCombo_, qOverload<int>(&QComboBox::activated), this, [this](int idx) {
         if (!syncingToolbar_)
             view_->fontSizeSelection(sizeCombo_->itemData(idx).toDouble());
@@ -334,6 +365,39 @@ void MainWindow::onLoaded(std::shared_ptr<oc::Document> doc, double ms, const QS
                     .arg(i.fallback.empty() ? tr("（无回退建议）")
                                              : tr("（显示回退 %1）").arg(QString::fromStdString(i.fallback))));
     }
+    rebuildOutline();
+}
+
+void MainWindow::rebuildOutline() {
+    outlineTree_->clear();
+    if (!editor_) return;
+    QTreeWidgetItem* top = nullptr;
+    const size_t n = editor_->paragraphCount();
+    for (size_t i = 0; i < n; ++i) {
+        const oc::Paragraph* p = editor_->paragraphAt(i);
+        if (!p) continue;
+        const bool isTitle = p->styleId == "Title";
+        int level = 0;
+        if (isTitle) level = 1;
+        else if (p->styleId == "Heading1") level = 2;
+        else if (p->styleId == "Heading2") level = 3;
+        else if (p->styleId == "Heading3") level = 4;
+        if (!level) continue;
+        QString text;
+        for (const auto& r : p->runs) text += QString::fromStdString(r.text);
+        if (text.isEmpty()) text = tr("（空标题）");
+        auto* item = new QTreeWidgetItem(QStringList() << text.left(40));
+        item->setData(0, Qt::UserRole, (qulonglong)i);
+        if (level == 1 || !top) {
+            outlineTree_->addTopLevelItem(item);
+            top = item;
+        } else {
+            top->addChild(item);
+        }
+    }
+    outlineTree_->expandAll();
+    logPanel_->log(QStringLiteral("INFO"),
+                   tr("目录导航：%1 个标题").arg(outlineTree_->topLevelItemCount()));
 }
 
 void MainWindow::onEdited() {
