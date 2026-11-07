@@ -1,5 +1,6 @@
 #include "ZipReader.h"
 #include "Inflate.h"
+#include "PlatformIO.h"
 #include <cstdio>
 #include <cstring>
 
@@ -58,7 +59,7 @@ static bool readRange(FILE* fp, const std::vector<uint8_t>& mem, uint64_t total,
 bool ZipReader::open(const std::string& path, std::string* err) {
     if (fp_) { fclose(fp_); fp_ = nullptr; }
     data_.clear(); entries_.clear(); fileSize_ = 0;
-    fp_ = fopen(path.c_str(), "rb");
+    fp_ = oc::fopenUtf8(path, "rb");
     if (!fp_) { if (err) *err = "cannot open file: " + path; return false; }
     if (fseek(fp_, 0, SEEK_END) != 0) { if (err) *err = "seek failed"; return false; }
     long sz = ftell(fp_);
