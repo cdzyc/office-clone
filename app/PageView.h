@@ -110,6 +110,11 @@ private:
     bool cursorVisible_ = true;
     int blinkTimer_ = 0;
     bool mouseDragging_ = false;
+
+    // 文档与编辑上下文
+    std::shared_ptr<const oc::Document> doc_;
+    oc::DocumentEditor* ed_ = nullptr;
+    oc::CommandStack* cs_ = nullptr;
 };
 
 } // namespace oc::qt
