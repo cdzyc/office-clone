@@ -3,6 +3,8 @@
 #include "../core/Document.h"
 #include <QMainWindow>
 #include <memory>
+#include <string>
+#include <vector>
 
 class QLabel;
 class QStatusBar;
@@ -10,6 +12,7 @@ class QStatusBar;
 namespace oc::qt {
 
 class PageView;
+class LogPanel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -21,12 +24,14 @@ public slots:
 
 private slots:
     void onOpenDialog();
-    void onLoaded(std::shared_ptr<oc::Document> doc, double ms, const QString& err);
+    void onLoaded(std::shared_ptr<oc::Document> doc, double ms, const QString& err,
+                  const std::vector<std::string>& warnings);
 
 private:
     void buildMenu();
 
     PageView* view_ = nullptr;
+    LogPanel* logPanel_ = nullptr;
     QLabel* status_ = nullptr;
 };
 
