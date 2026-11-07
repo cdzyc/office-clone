@@ -155,7 +155,7 @@ void MainWindow::buildToolbar() {
     fontCombo_ = new QFontComboBox(this);
     fontCombo_->setToolTip(tr("字体（中西文统一设置）"));
     tb->addWidget(fontCombo_);
-    connect(fontCombo_, qOverload<const QString&>(&QComboBox::activated), this, [this](const QString& f) {
+    connect(fontCombo_, &QComboBox::textActivated, this, [this](const QString& f) {
         if (!syncingToolbar_) view_->fontNameSelection(f);
     });
 
