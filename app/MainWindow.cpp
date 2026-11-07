@@ -7,9 +7,12 @@
 #include "../core/EditCommands.h"
 #include "../core/FontCheck.h"
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
+#include <QComboBox>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QFontComboBox>
 #include <QFontDatabase>
 #include <QFrame>
 #include <QGroupBox>
@@ -19,8 +22,9 @@
 #include <QMessageBox>
 #include <QSplitter>
 #include <QStatusBar>
-#include <QStatusBar>
 #include <QTextEdit>
+#include <QToolBar>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <chrono>
 #include <thread>
@@ -61,7 +65,9 @@ MainWindow::MainWindow() {
     statusBar()->addWidget(status_, 1);
 
     buildMenu();
+    buildToolbar();
     connect(view_, &PageView::edited, this, &MainWindow::onEdited);
+    connect(view_, &PageView::cursorMoved, this, &MainWindow::syncToolbar);
     logPanel_->log(QStringLiteral("INFO"),
                    tr("office-clone 测试版启动。支持：点击定位、键盘输入、中文输入、"
                       "Backspace/Delete、回车拆段、Ctrl+Z/Y 撤销重做、Ctrl+B 加粗、"
@@ -113,6 +119,139 @@ void MainWindow::buildMenu() {
     connect(bold, &QAction::triggered, this, [this]() {
         view_->boldSelection(!view_->selectionBoldHint());
     });
+    QAction* italicAct = edit->addAction(tr("斜体(&I)"));
+    italicAct->setShortcut(QKeySequence::Italic);
+    connect(italicAct, &QAction::triggered, this, [this]() {
+        view_->italicSelection(!view_->formatHints().italic);
+    });
+    QAction* ulAct = edit->addAction(tr("下划线(&D)"));
+    ulAct->setShortcut(QKeySequence::Underline);
+    connect(ulAct, &QAction::triggered, this, [this]() {
+        view_->underlineSelection(!view_->formatHints().underline);
+    });
+}
+
+void MainWindow::buildToolbar() {
+    auto* tb = addToolBar(tr("格式(&F)"));
+    tb->setMovable(false);
+
+    // 样式（正文/标题）
+    styleCombo_ = new QComboBox(this);
+    styleCombo_->addItem(tr("正文"), QStringLiteral(""));
+    styleCombo_->addItem(tr("标题1"), QStringLiteral("Heading1"));
+    styleCombo_->addItem(tr("标题2"), QStringLiteral("Heading2"));
+    styleCombo_->addItem(tr("标题3"), QStringLiteral("Heading3"));
+    styleCombo_->addItem(tr("标题(Title)"), QStringLiteral("Title"));
+    styleCombo_->setToolTip(tr("段落样式"));
+    tb->addWidget(styleCombo_);
+    connect(styleCombo_, &QComboBox::activated, this, [this](int) {
+        if (!syncingToolbar_)
+            view_->paraStyleSelection(styleCombo_->currentData().toString());
+    });
+
+    tb->addSeparator();
+
+    // 字体（系统字体族）
+    fontCombo_ = new QFontComboBox(this);
+    fontCombo_->setToolTip(tr("字体（中西文统一设置）"));
+    tb->addWidget(fontCombo_);
+    connect(fontCombo_, &QFontComboBox::activated, this, [this](const QString& f) {
+        if (!syncingToolbar_) view_->fontNameSelection(f);
+    });
+
+    // 中文字号
+    sizeCombo_ = new QComboBox(this);
+    struct ZH { const char* name; double pt; };
+    const ZH zhSizes[] = {
+        {"初号", 42}, {"小初", 36}, {"一号", 26}, {"小一", 24}, {"二号", 22},
+        {"小二", 18}, {"三号", 16}, {"小三", 15}, {"四号", 14}, {"小四", 12},
+        {"五号", 10.5}, {"小五", 9}, {"六号", 7.5},
+    };
+    for (const auto& z : zhSizes)
+        sizeCombo_->addItem(QString::fromUtf8(z.name), z.pt);
+    sizeCombo_->setCurrentIndex(9);       // 小四默认
+    sizeCombo_->setToolTip(tr("字号（中文字号）"));
+    tb->addWidget(sizeCombo_);
+    connect(sizeCombo_, &QComboBox::activated, this, [this](int idx) {
+        if (!syncingToolbar_)
+            view_->fontSizeSelection(sizeCombo_->itemData(idx).toDouble());
+    });
+
+    tb->addSeparator();
+
+    // B / I / U
+    auto makeBtn = [&](const QString& text, const QString& tip, QKeySequence::StandardKey key) {
+        auto* b = new QToolButton(this);
+        b->setText(text);
+        b->setToolTip(tip);
+        b->setCheckable(true);
+        b->setAutoRaise(true);
+        QFont f = b->font();
+        f.setBold(text == tr("B"));
+        f.setItalic(text == tr("I"));
+        f.setUnderline(text == tr("U"));
+        b->setFont(f);
+        tb->addWidget(b);
+        return b;
+    };
+    boldBtn_ = makeBtn(tr("B"), tr("加粗 Ctrl+B"), QKeySequence::Bold);
+    italicBtn_ = makeBtn(tr("I"), tr("斜体 Ctrl+I"), QKeySequence::Italic);
+    underlineBtn_ = makeBtn(tr("U"), tr("下划线 Ctrl+U"), QKeySequence::Underline);
+    auto connFormat = [&](QToolButton* b, auto fn) {
+        connect(b, &QToolButton::clicked, this, [this, fn, b]() {
+            if (!syncingToolbar_ && view_) fn(b->isChecked());
+        });
+    };
+    connFormat(boldBtn_, [this](bool v) { view_->boldSelection(v); });
+    connFormat(italicBtn_, [this](bool v) { view_->italicSelection(v); });
+    connFormat(underlineBtn_, [this](bool v) { view_->underlineSelection(v); });
+
+    tb->addSeparator();
+
+    // 对齐（互斥）
+    alignGroup_ = new QActionGroup(this);
+    alignActs_.clear();
+    auto addAlign = [&](const QString& icon, int a, const QString& tip) {
+        QAction* act = alignGroup_->addAction(icon);
+        act->setCheckable(true);
+        act->setToolTip(tip);
+        tb->addAction(act);
+        connect(act, &QAction::triggered, this, [this, a]() {
+            if (!syncingToolbar_ && view_) view_->alignSelection(a);
+        });
+        alignActs_.append(act);
+    };
+    addAlign(tr("⟵"), 0, tr("左对齐"));
+    addAlign(tr("⟶"), 1, tr("居中"));
+    addAlign(tr("⟶|"), 2, tr("右对齐"));
+    addAlign(tr("☰"), 3, tr("两端对齐"));
+    alignActs_[0]->setChecked(true);
+}
+
+void MainWindow::syncToolbar() {
+    if (!view_) return;
+    auto h = view_->formatHints();
+    syncingToolbar_ = true;
+    boldBtn_->setChecked(h.bold);
+    italicBtn_->setChecked(h.italic);
+    underlineBtn_->setChecked(h.underline);
+    // 对齐
+    if (h.align >= 0 && h.align < alignActs_.size())
+        alignActs_[h.align]->setChecked(true);
+    // 样式
+    int idx = styleCombo_->findData(h.styleId);
+    if (idx >= 0) styleCombo_->setCurrentIndex(idx);
+    // 字号：找最接近的中文号
+    if (h.sizePt > 0) {
+        int best = 0;
+        double bestD = 1e9;
+        for (int i = 0; i < sizeCombo_->count(); ++i) {
+            double d = qAbs(sizeCombo_->itemData(i).toDouble() - h.sizePt);
+            if (d < bestD) { bestD = d; best = i; }
+        }
+        sizeCombo_->setCurrentIndex(best);
+    }
+    syncingToolbar_ = false;
 }
 
 void MainWindow::onOpenDialog() {
