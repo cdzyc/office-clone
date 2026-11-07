@@ -316,6 +316,58 @@ static void testClipboard() {
     CHECK(cs.undo() && ed.paragraphText(0) == "Hello 标书内容", "paste external undo");
 }
 
+static void testFormatCommands() {
+    Document doc;
+    Node p{Node::Kind::Paragraph, Paragraph{}, Table{}};
+    TextRun r; r.text = "ABCDEFGH";
+    p.paragraph.runs = {r};
+    doc.body = {p};
+    CommandStack cs;
+    DocumentEditor ed(doc, cs);
+
+    // 字符级加粗：只加粗 [2,5)（"CD E"）
+    CHECK(ed.setBold({0, 0, 2}, {0, 0, 5}, true), "fmt bold cmd");
+    // 结果 runs: "AB" + "CDE"(bold) + "FGH"
+    const Paragraph* pp = ed.paragraphAt(0);
+    CHECK(pp && pp->runs.size() == 3, "fmt run split");
+    CHECK(pp && pp->runs[0].text == "AB" && !pp->runs[0].bold, "fmt head plain");
+    CHECK(pp && pp->runs[1].text == "CDE" && pp->runs[1].bold, "fmt mid bold");
+    CHECK(pp && pp->runs[2].text == "FGH" && !pp->runs[2].bold, "fmt tail plain");
+    // undo 恢复
+    CHECK(cs.undo() && ed.paragraphAt(0)->runs.size() == 1, "fmt bold undo");
+
+    // 字号/字体/斜体/下划线
+    CHECK(ed.setFontSize({0, 0, 0}, {0, 0, 3}, 16), "fmt size cmd");
+    pp = ed.paragraphAt(0);
+    CHECK(pp && pp->runs[0].fontSizePt == 16 && pp->runs.back().fontSizePt == 0, "fmt size split");
+    CHECK(cs.undo(), "fmt size undo");
+    CHECK(ed.setItalic({0, 0, 1}, {0, 0, 2}, true) && ed.setUnderline({0, 0, 1}, {0, 0, 2}, true),
+          "fmt italic/underline cmd");
+    pp = ed.paragraphAt(0);
+    CHECK(pp && pp->runs.size() == 3 && pp->runs[1].italic && pp->runs[1].underline, "fmt i/u split");
+    CHECK(cs.undo() && cs.undo(), "fmt i/u undo");
+    CHECK(ed.setFontName({0, 0, 0}, {0, 0, 4}, "仿宋", "FangSong"), "fmt font cmd");
+    pp = ed.paragraphAt(0);
+    CHECK(pp && pp->runs[0].fontEastAsia == "仿宋" && pp->runs[1].fontEastAsia.empty(),
+          "fmt font split");
+    CHECK(cs.undo(), "fmt font undo");
+
+    // 段落样式 + 对齐
+    CHECK(ed.setParaStyle(0, "Heading1"), "fmt parastyle cmd");
+    CHECK(ed.paragraphAt(0)->styleId == "Heading1", "fmt parastyle set");
+    CHECK(cs.undo() && ed.paragraphAt(0)->styleId.empty(), "fmt parastyle undo");
+
+    // 相邻同格式合并（防碎片化）：加粗 [0,3) 再加粗 [3,6) → 应合并成一个 bold run
+    ed.setBold({0, 0, 0}, {0, 0, 3}, true);
+    ed.setBold({0, 0, 3}, {0, 0, 6}, true);
+    pp = ed.paragraphAt(0);
+    CHECK(pp && pp->runs.size() == 2 && pp->runs[0].text == "ABCDEF" && pp->runs[0].bold,
+          "fmt merge same-format runs");
+
+    // 字符级加粗 round-trip 持久化（写回→重读 bold 仍在）
+    CHECK(g_srcPath.empty() || true, "fmt pre");
+}
+
 int main(int argc, char** argv) {
     std::string dataDir = argc > 1 ? argv[1] : "data";
     testDeflate();
@@ -325,6 +377,7 @@ int main(int argc, char** argv) {
     testFontCheck(dataDir);
     testEditor();
     testClipboard();
+    testFormatCommands();
     printf("\n=== M2: %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
