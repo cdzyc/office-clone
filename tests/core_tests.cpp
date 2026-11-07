@@ -5,9 +5,11 @@
 #include "../core/XmlPull.h"
 #include "../core/Document.h"
 #include "../core/DocxReader.h"
+#include "../core/DocxWriter.h"
 #include "../core/CommandStack.h"
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -186,6 +188,35 @@ static void testCommandStack() {
     CHECK(cs.revision() == 4, "revision count");
 }
 
+static void testChinesePath(const std::string& dataDir) {
+    // 真机战报 #1：Windows 下中文文件名打开失败（fopen ANSI 代码页 vs UTF-8 路径）
+    // 回归：中文目录 + 中文文件名的读 + 写 round-trip 必须成功
+    namespace fs = std::filesystem;
+    try {
+        fs::path dir = fs::path(dataDir) / "中文目录_测试";
+        fs::create_directories(dir);
+        fs::path dst = dir / "标书 文档（修复验证）.docx";
+        fs::path src = fs::path(dataDir) / "mini_bid.docx";
+        fs::copy_file(src, dst, fs::copy_options::overwrite_existing);
+
+        // 读
+        Document doc;
+        DocxReadResult r = DocxReader::read(dst.string(), doc);
+        CHECK(r.ok, ("chinese path read: " + r.error).c_str());
+        CHECK(r.ok && doc.stats.paragraphs == 9, "chinese path content ok");
+
+        // 写回（写路径同样要求中文安全）
+        DocxWriteResult w = DocxWriter::write((dir / "写回_输出.docx").string(), doc);
+        CHECK(w.ok, "chinese path write ok");
+        Document doc2;
+        CHECK(DocxReader::read((dir / "写回_输出.docx").string(), doc2).ok,
+              "chinese path reread ok");
+    } catch (const std::exception& e) {
+        printf("  fs error: %s\n", e.what());
+        CHECK(false, "chinese path fs setup");
+    }
+}
+
 int main(int argc, char** argv) {
     std::string dataDir = argc > 1 ? argv[1] : "data";
     testInflate(dataDir);
@@ -193,6 +224,7 @@ int main(int argc, char** argv) {
     testXml();
     testDocx(dataDir);
     testCommandStack();
+    testChinesePath(dataDir);
     printf("\n=== %d passed, %d failed ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
