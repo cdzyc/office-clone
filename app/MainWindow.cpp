@@ -417,6 +417,9 @@ bool MainWindow::mediaProvider(const std::string&, const std::string& zipPath,
 
 bool MainWindow::writeDocxTo(const QString& targetPath) {
     if (!doc_) return false;
+    // ⚠️ 先关闭源文件长驻句柄——Windows 下自己打开的 rb 句柄会拒绝同一文件的 wb 创建
+    //（真机战报 #4：保存报 cannot create zip）
+    if (srcZip_ && targetPath == openPath_) srcZip_.reset();
     s_srcZip = srcZip_.get();
     std::vector<std::string> warnings;
     auto t0 = std::chrono::steady_clock::now();
@@ -425,9 +428,22 @@ bool MainWindow::writeDocxTo(const QString& targetPath) {
     double ms = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - t0).count();
     s_srcZip = nullptr;
+    // 保存后重新打开长驻句柄（后续保存的媒体搬运基準）
+    if (!srcZip_) {
+        srcZip_ = std::make_unique<ZipReader>();
+        std::string zerr;
+        if (!srcZip_->open(targetPath.toStdString(), &zerr))
+            logPanel_->log(QStringLiteral("WARN"),
+                           tr("保存后重开源文件失败：%1").arg(QString::fromStdString(zerr)));
+    }
     if (!r.ok) {
-        logPanel_->log(QStringLiteral("ERROR"), tr("保存失败：%1").arg(QString::fromStdString(r.error)));
-        QMessageBox::warning(this, tr("保存失败"), QString::fromStdString(r.error));
+        logPanel_->log(QStringLiteral("ERROR"),
+                       tr("保存失败：%1（若文件正在 Word/WPS 中打开，请先关闭后重试）")
+                           .arg(QString::fromStdString(r.error)));
+        QMessageBox::warning(this, tr("保存失败"),
+            tr("%1\n\n若该文件正在 Word/WPS 中打开，请先关闭后重试；"
+               "或使用 文件→另存为 保存到新文件。")
+                .arg(QString::fromStdString(r.error)));
         return false;
     }
     dirty_ = false;
