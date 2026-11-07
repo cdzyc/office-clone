@@ -9,6 +9,8 @@ class QComboBox;
 class QFontComboBox;
 class QToolButton;
 class QActionGroup;
+class QTreeWidget;
+class QTreeWidgetItem;
 
 namespace oc {
 class CommandStack;
@@ -63,6 +65,8 @@ private:
     QActionGroup* alignGroup_ = nullptr;
     QList<QAction*> alignActs_;
     bool syncingToolbar_ = false;
+    QTreeWidget* outlineTree_ = nullptr;      // 左侧大纲导航
+    void rebuildOutline();                    // 扫描 Title/Heading 构建导航树
 
     std::shared_ptr<oc::Document> doc_;       // 可编辑文档
     std::unique_ptr<oc::CommandStack> stack_;
