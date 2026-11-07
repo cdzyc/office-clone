@@ -144,7 +144,7 @@ void MainWindow::buildToolbar() {
     styleCombo_->addItem(tr("标题(Title)"), QStringLiteral("Title"));
     styleCombo_->setToolTip(tr("段落样式"));
     tb->addWidget(styleCombo_);
-    connect(styleCombo_, &QComboBox::activated, this, [this](int) {
+    connect(styleCombo_, qOverload<int>(&QComboBox::activated), this, [this](int) {
         if (!syncingToolbar_)
             view_->paraStyleSelection(styleCombo_->currentData().toString());
     });
@@ -155,7 +155,7 @@ void MainWindow::buildToolbar() {
     fontCombo_ = new QFontComboBox(this);
     fontCombo_->setToolTip(tr("字体（中西文统一设置）"));
     tb->addWidget(fontCombo_);
-    connect(fontCombo_, &QFontComboBox::activated, this, [this](const QString& f) {
+    connect(fontCombo_, qOverload<const QString&>(&QComboBox::activated), this, [this](const QString& f) {
         if (!syncingToolbar_) view_->fontNameSelection(f);
     });
 
@@ -172,7 +172,7 @@ void MainWindow::buildToolbar() {
     sizeCombo_->setCurrentIndex(9);       // 小四默认
     sizeCombo_->setToolTip(tr("字号（中文字号）"));
     tb->addWidget(sizeCombo_);
-    connect(sizeCombo_, &QComboBox::activated, this, [this](int idx) {
+    connect(sizeCombo_, qOverload<int>(&QComboBox::activated), this, [this](int idx) {
         if (!syncingToolbar_)
             view_->fontSizeSelection(sizeCombo_->itemData(idx).toDouble());
     });
