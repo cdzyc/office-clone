@@ -1,5 +1,6 @@
 #include "ZipWriter.h"
 #include "Deflate.h"
+#include "PlatformIO.h"
 #include "ZipReader.h"      // oc::crc32
 #include <ctime>
 #include <cstring>
@@ -35,7 +36,7 @@ void dosDateTime(uint16_t* t, uint16_t* d) {
 } // namespace
 
 bool ZipWriter::open(const std::string& path, std::string* err) {
-    fp_ = fopen(path.c_str(), "wb");
+    fp_ = oc::fopenUtf8(path, "wb");
     if (!fp_) { if (err) *err = "cannot create zip: " + path; return false; }
     recs_.clear();
     curOffset_ = 0;
