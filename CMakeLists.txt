@@ -72,6 +72,7 @@ if (OC_BUILD_QT)
         app/MainWindow.cpp
         app/LogPanel.cpp
         app/PageView.cpp
+        app/FindReplace.cpp
     )
     target_link_libraries(office-clone PRIVATE Qt6::Widgets oc_core)
     set_target_properties(office-clone PROPERTIES
