@@ -307,6 +307,21 @@ bool DocumentEditor::setUnderline(DocPos from, DocPos to, bool val) {
         [val](TextRun& r) { r.underline = val; }, "underline");
 }
 
+bool DocumentEditor::setStrike(DocPos from, DocPos to, bool val) {
+    return formatRange(from, to,
+        [val](TextRun& r) { r.strike = val; }, "strike");
+}
+
+bool DocumentEditor::setTextColor(DocPos from, DocPos to, const std::string& hexRgb) {
+    return formatRange(from, to,
+        [hexRgb](TextRun& r) { r.color = hexRgb; }, "textcolor");
+}
+
+bool DocumentEditor::setHighlight(DocPos from, DocPos to, const std::string& colorName) {
+    return formatRange(from, to,
+        [colorName](TextRun& r) { r.highlight = colorName; }, "highlight");
+}
+
 bool DocumentEditor::setFontSize(DocPos from, DocPos to, double pt) {
     if (pt < 4 || pt > 200) return false;
     return formatRange(from, to,
