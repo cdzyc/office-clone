@@ -12,6 +12,7 @@
 #include <QPaintEvent>
 #include <QScrollBar>
 #include <QTextOption>
+#include <QRegularExpression>
 #include <algorithm>
 
 namespace oc::qt {
@@ -145,6 +146,14 @@ void PageView::rebuildLayout() {
         QString text;
         for (const auto& r : p->runs) text += QString::fromStdString(r.text);
         if (!p->images.empty()) text += QStringLiteral(" ▣图片%1 ").arg(p->images.size());
+        // 缩进（twips→px@96：/15）+ 行距倍数（w:line 240=单倍）
+        const qreal indL = p->indLeftTw / 15.0, indR = p->indRightTw / 15.0;
+        const qreal indFL = p->indFirstLineTw / 15.0;
+        b.textX = x + indL;
+        b.textW = width - indL - indR;
+        b.firstLineIndent = indFL;
+        b.lineFactor = p->lineSpacing > 0 ? (p->lineSpacing / 240.0) : 1.0;
+
         b.layout = std::make_unique<QTextLayout>(text, b.font);
         b.layout->setTextOption(QTextOption(alignFor(*p)));
         b.layout->setFormats(formatsFor(*p, b.font));
@@ -152,7 +161,7 @@ void PageView::rebuildLayout() {
         forever {
             QTextLine line = b.layout->createLine();
             if (!line.isValid()) break;
-            line.setLineWidth(width);
+            line.setLineWidth(b.textW);
             b.lines.append(line);
         }
         b.layout->endLayout();
@@ -168,9 +177,10 @@ void PageView::rebuildLayout() {
         }
         // ⚠️ 逐行纵向定位（图片区之下；修复真机战报 #2：行叠画）
         qreal lineY = b.imgBlockH;
+        const qreal factor = b.lineFactor > 0.01 ? b.lineFactor : 1.0;
         for (auto& l : b.lines) {
             l.setPosition(QPointF(0, lineY));
-            lineY += l.height() + lineGap_;
+            lineY += l.height() * factor + lineGap_;
         }
         b.h = qMax(lineY - lineGap_, 18.0) + paraGap_;
         b.y = y;
@@ -393,7 +403,13 @@ void PageView::paintEvent(QPaintEvent*) {
             }
         }
         // 文本（含每 run 富格式）
-        b.layout->draw(&p, QPointF(b.x, b.y - scrollY));
+        // 文本绘制（缩进后 x + 首行缩进作用于第一行）
+        if (!b.lines.isEmpty() && b.firstLineIndent != 0) {
+            // QTextLayout 整体绘制；首行缩进用临时平移近似（首行单独画，其余整体）
+            b.layout->draw(&p, QPointF(b.textX + b.firstLineIndent, b.y - scrollY));
+        } else {
+            b.layout->draw(&p, QPointF(b.textX, b.y - scrollY));
+        }
 
         // 图片占位（段内含图）
         if (!para->images.empty()) {
@@ -518,11 +534,26 @@ void PageView::keyPressEvent(QKeyEvent* e) {
         }
         break;
     case Qt::Key_Return:
-    case Qt::Key_Enter:
+    case Qt::Key_Enter: {
         if (hasSel) { ed_->deleteRange(selStart, selEnd); cursor_ = selStart; }
+        // 列表自动续号：前段是 •/N. 前缀 → 新段继承（编号+1；空列表项回车=退出列表）
+        QString curText = paraText(cursor_.para);
+        QString carry;
+        if (curText.startsWith(QStringLiteral("• "))) carry = QStringLiteral("• ");
+        else {
+            QRegularExpression re(QStringLiteral("^(\\d+)\\. "));
+            auto m = re.match(curText);
+            if (m.hasMatch()) carry = QString::number(m.captured(1).toInt() + 1) + QStringLiteral(". ");
+        }
+        if (!carry.isEmpty() && curText.trimmed() == carry.trimmed()) carry.clear();  // 空项退出
         ed_->splitParagraph(cursor_);
         ++cursor_.para; cursor_.run = 0; cursor_.off = 0;
+        if (!carry.isEmpty()) {
+            ed_->insertText(cursor_, carry.toStdString());
+            cursor_.off += carry.toUtf8().size();
+        }
         break;
+    }
     case Qt::Key_Left: {
         if (hasSel && !keepAnchor) { cursor_ = selStart; }
         else if (cursor_.off > 0) {
@@ -771,6 +802,73 @@ bool PageView::highlightSelection(const QString& colorName) {
     relayoutAndKeepCursor();
     emit edited();
     return true;
+}
+
+bool PageView::lineSpacingSelection(double factor) {
+    if (!ed_) return false;
+    return ed_->setLineSpacing(cursor_.para, (uint32_t)(factor * 240 + 0.5)) &&
+           (relayoutAndKeepCursor(), emit edited(), true);
+}
+
+bool PageView::indentSelection(int deltaChars) {
+    if (!ed_) return false;
+    const Paragraph* p = ed_->paragraphAt(cursor_.para);
+    if (!p) return false;
+    int left = (int)p->indLeftTw + deltaChars * 240;
+    if (left < 0) left = 0;
+    bool ok = ed_->setIndent(cursor_.para, (uint32_t)left, p->indRightTw, p->indFirstLineTw);
+    if (ok) { relayoutAndKeepCursor(); emit edited(); }
+    return ok;
+}
+
+bool PageView::firstLineIndentSelection() {
+    if (!ed_) return false;
+    const Paragraph* p = ed_->paragraphAt(cursor_.para);
+    if (!p) return false;
+    int fl = p->indFirstLineTw != 0 ? 0 : 480;         // 切换：2字符/无
+    bool ok = ed_->setIndent(cursor_.para, p->indLeftTw, p->indRightTw, fl);
+    if (ok) { relayoutAndKeepCursor(); emit edited(); }
+    return ok;
+}
+
+bool PageView::toggleList(bool numbered) {
+    if (!ed_) return false;
+    QString text = paraText(cursor_.para);
+    QString prefix = numbered ? numberedPrefixOf(cursor_.para) : QStringLiteral("• ");
+    QString stripped = text;
+    for (const QString& pre : {QStringLiteral("• "), QStringLiteral("1. "), QStringLiteral("2. "),
+                                QStringLiteral("3. "), QStringLiteral("4. "), QStringLiteral("5. ")}) {
+        if (stripped.startsWith(pre)) { stripped.remove(0, pre.size()); break; }
+    }
+    QString newText = (stripped == text) ? prefix + text : stripped;
+    const Paragraph* p = ed_->paragraphAt(cursor_.para);
+    RunList newRuns;
+    if (p && !p->runs.empty()) {
+        TextRun r = p->runs.front();
+        r.text = newText.toStdString();
+        newRuns.push_back(r);
+    } else {
+        TextRun r; r.text = newText.toStdString();
+        newRuns.push_back(r);
+    }
+    RunList oldRuns = p ? p->runs : RunList{};
+    ed_->replaceRunsCommand(cursor_.para, std::move(oldRuns), std::move(newRuns), "list");
+    relayoutAndKeepCursor();
+    emit edited();
+    return true;
+}
+
+QString PageView::numberedPrefixOf(size_t flat) const {
+    // 向上数连续编号段，序号+1
+    int n = 1;
+    for (size_t i = flat; i > 0; --i) {
+        QString t = paraText(i - 1);
+        QRegularExpression re(QStringLiteral("^\\d+\\. "));
+        auto m = re.match(t);
+        if (m.hasMatch()) ++n;
+        else break;
+    }
+    return QString::number(n) + QStringLiteral(". ");
 }
 
 bool PageView::paraStyleSelection(const QString& styleId) {
