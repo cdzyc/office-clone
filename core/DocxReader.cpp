@@ -199,6 +199,15 @@ bool DocxReader::parseDocumentXml(const std::vector<uint8_t>& xml, Document& doc
             if (tag == "w:b" && inRunPr) { curRun.bold = true; continue; }
             if (tag == "w:i" && inRunPr) { curRun.italic = true; continue; }
             if (tag == "w:u" && inRunPr) { curRun.underline = true; continue; }
+            if (tag == "w:strike" && inRunPr) { curRun.strike = true; continue; }
+            if (tag == "w:color" && inRunPr) {
+                if (const std::string* v = p.attr("w:val")) curRun.color = *v;
+                continue;
+            }
+            if (tag == "w:highlight" && inRunPr) {
+                if (const std::string* v = p.attr("w:val")) curRun.highlight = *v;
+                continue;
+            }
             if (tag == "w:rFonts" && inRunPr) {
                 if (const std::string* v = p.attr("w:ascii")) curRun.fontAscii = *v;
                 if (const std::string* v = p.attr("w:eastAsia")) curRun.fontEastAsia = *v;
