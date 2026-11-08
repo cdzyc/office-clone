@@ -59,6 +59,16 @@ std::string DocxWriter::buildDocumentXml(const Document& doc) {
                 if (p.lineSpacing) s += " w:line=\"" + num(p.lineSpacing) + "\"";
                 s += "/>";
             }
+            if (p.indLeftTw || p.indRightTw || p.indFirstLineTw) {
+                s += "<w:ind";
+                if (p.indLeftTw) s += " w:left=\"" + num(p.indLeftTw) + "\"";
+                if (p.indRightTw) s += " w:right=\"" + num(p.indRightTw) + "\"";
+                if (p.indFirstLineTw > 0)
+                    s += " w:firstLine=\"" + num((uint64_t)p.indFirstLineTw) + "\"";
+                else if (p.indFirstLineTw < 0)
+                    s += " w:hanging=\"" + num((uint64_t)(-p.indFirstLineTw)) + "\"";
+                s += "/>";
+            }
             s += "</w:pPr>";
         }
         // 内联图片（先图后文——Word 常见顺序）
