@@ -62,6 +62,11 @@ public:
     bool strikeSelection(bool val);
     bool textColorSelection(const QString& hexRgb);
     bool highlightSelection(const QString& colorName);
+    // 批次B：行距/缩进/列表（作用于光标段或选区段）
+    bool lineSpacingSelection(double factor);          // 1.0/1.5/2.0…
+    bool indentSelection(int deltaChars);              // 左缩进 ±（1字符=240twips）
+    bool firstLineIndentSelection();                   // 首行缩进 2 字符切换
+    bool toggleList(bool numbered);                    // 圆点/编号列表（前缀式）
     bool paraStyleSelection(const QString& styleId);
     bool alignSelection(int align);      // 0左 1中 2右 3两端（光标所在段）
 
@@ -86,6 +91,9 @@ private:
         struct Img { QString relId; qreal w = 0, h = 0; };
         QVector<Img> imgs;              // 段内图片（真实显示）
         qreal imgBlockH = 0;            // 图片区高度（文本前置）
+        qreal textX = 0, textW = 0;     // 缩进后文本区（x 相对文档）
+        qreal firstLineIndent = 0;      // 首行缩进 px
+        qreal lineFactor = 1.0;         // 行距倍数
     };
     struct TableBox {                   // 表格（真机战报 #3：WPS 可见表格必须渲染）
         qreal y = 0, h = 0, w = 0;
@@ -129,6 +137,7 @@ private:
     oc::CommandStack* cs_ = nullptr;
     oc::ImageCache* cache_ = nullptr;   // 图片缓存（MainWindow 持有）
     DocPos charToDocPos(size_t flat, int charIdx) const;  // 字符下标→run/字节偏移
+    QString numberedPrefixOf(size_t flat) const;          // 编号列表当前序号前缀
 };
 
 } // namespace oc::qt
