@@ -48,10 +48,10 @@ public:
     // 光标/选区格式提示（工具栏同步用）
     struct FormatHints {
         bool hasDoc = false;
-        bool bold = false, italic = false, underline = false;
+        bool bold = false, italic = false, underline = false, strike = false;
         double sizePt = 0;               // 0 = 混合/默认
         QString eastAsia;                // 空 = 混合/默认
-        QString styleId;
+        QString styleId, color, highlight;
         int align = 0;                   // 0左 1中 2右 3两端
     };
     FormatHints formatHints() const;
@@ -59,6 +59,9 @@ public:
     bool underlineSelection(bool val);
     bool fontSizeSelection(double pt);
     bool fontNameSelection(const QString& family);
+    bool strikeSelection(bool val);
+    bool textColorSelection(const QString& hexRgb);
+    bool highlightSelection(const QString& colorName);
     bool paraStyleSelection(const QString& styleId);
     bool alignSelection(int align);      // 0左 1中 2右 3两端（光标所在段）
 
