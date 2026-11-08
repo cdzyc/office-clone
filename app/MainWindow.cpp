@@ -15,6 +15,8 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFontComboBox>
+#include <QIcon>
+#include <QPixmap>
 #include <QFontDatabase>
 #include <QFrame>
 #include <QGroupBox>
@@ -257,6 +259,12 @@ void MainWindow::buildToolbar() {
     boldBtn_ = makeBtn(tr("B"), tr("加粗 Ctrl+B"), QKeySequence::Bold);
     italicBtn_ = makeBtn(tr("I"), tr("斜体 Ctrl+I"), QKeySequence::Italic);
     underlineBtn_ = makeBtn(tr("U"), tr("下划线 Ctrl+U"), QKeySequence::Underline);
+    strikeBtn_ = makeBtn(tr("S"), tr("删除线"), QKeySequence::UnknownKey);
+    {
+        QFont sf = strikeBtn_->font();
+        sf.setStrikeOut(true);
+        strikeBtn_->setFont(sf);
+    }
     auto connFormat = [&](QToolButton* b, auto fn) {
         connect(b, &QToolButton::clicked, this, [this, fn, b]() {
             if (!syncingToolbar_ && view_) fn(b->isChecked());
@@ -265,6 +273,49 @@ void MainWindow::buildToolbar() {
     connFormat(boldBtn_, [this](bool v) { view_->boldSelection(v); });
     connFormat(italicBtn_, [this](bool v) { view_->italicSelection(v); });
     connFormat(underlineBtn_, [this](bool v) { view_->underlineSelection(v); });
+    connFormat(strikeBtn_, [this](bool v) { view_->strikeSelection(v); });
+
+    // 文字颜色（标准色板）
+    colorCombo_ = new QComboBox(this);
+    struct CItem { const char* name; const char* hex; const char* disp; };
+    const CItem colors[] = {
+        {"", "000000", "自动"}, {"FF0000", "FF0000", "红"}, {"FFC000", "FFC000", "橙"},
+        {"FFFF00", "FFFF00", "黄"}, {"92D050", "92D050", "绿"}, {"00B0F0", "00B0F0", "蓝"},
+        {"0070C0", "0070C0", "深蓝"}, {"7030A0", "7030A0", "紫"}, {"C00000", "C00000", "深红"},
+        {"000000", "000000", "黑"},
+    };
+    for (const auto& c : colors) {
+        QPixmap pm(14, 14);
+        pm.fill(QColor(QString::fromLatin1(c.hex)));
+        QIcon icon(pm);
+        colorCombo_->addItem(icon, QString::fromUtf8(c.disp), QString::fromLatin1(c.hex));
+    }
+    colorCombo_->setToolTip(tr("文字颜色"));
+    tb->addWidget(colorCombo_);
+    connect(colorCombo_, qOverload<int>(&QComboBox::activated), this, [this](int idx) {
+        if (!syncingToolbar_)
+            view_->textColorSelection(colorCombo_->itemData(idx).toString());
+    });
+
+    // 字符高亮（色板）
+    hlCombo_ = new QComboBox(this);
+    const CItem hls[] = {
+        {"", "", "无"}, {"yellow", "FFE100", "黄"}, {"bright_green", "00FF00", "绿"},
+        {"cyan", "00FFFF", "青"}, {"magenta", "FF00FF", "粉"}, {"red", "FF0000", "红"},
+        {"blue", "00B0F0", "蓝"},
+    };
+    for (const auto& c : hls) {
+        QPixmap pm(14, 14);
+        if (c.hex[0]) pm.fill(QColor(QString::fromLatin1(c.hex)));
+        else pm.fill(Qt::transparent);
+        hlCombo_->addItem(QIcon(pm), QString::fromUtf8(c.disp), QString::fromLatin1(c.name));
+    }
+    hlCombo_->setToolTip(tr("字符高亮"));
+    tb->addWidget(hlCombo_);
+    connect(hlCombo_, qOverload<int>(&QComboBox::activated), this, [this](int idx) {
+        if (!syncingToolbar_)
+            view_->highlightSelection(hlCombo_->itemData(idx).toString());
+    });
 
     tb->addSeparator();
 
@@ -295,6 +346,7 @@ void MainWindow::syncToolbar() {
     boldBtn_->setChecked(h.bold);
     italicBtn_->setChecked(h.italic);
     underlineBtn_->setChecked(h.underline);
+    strikeBtn_->setChecked(h.strike);
     // 对齐
     if (h.align >= 0 && h.align < alignActs_.size())
         alignActs_[h.align]->setChecked(true);
