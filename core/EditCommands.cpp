@@ -421,6 +421,63 @@ bool DocumentEditor::setParaStyle(size_t flatPara, const std::string& styleId) {
     return true;
 }
 
+namespace {
+// ASCII 大小写不敏感搜索（中文直接匹配；返回原串索引，找不到 npos）
+size_t findICase(const std::string& hay, const std::string& needle, size_t from) {
+    if (needle.empty() || hay.size() < needle.size()) return std::string::npos;
+    for (size_t i = from; i + needle.size() <= hay.size(); ++i) {
+        bool ok = true;
+        for (size_t k = 0; k < needle.size(); ++k) {
+            char a = hay[i + k], b = needle[k];
+            if (a >= 'A' && a <= 'Z') a = char(a + 32);
+            if (b >= 'A' && b <= 'Z') b = char(b + 32);
+            if (a != b) { ok = false; break; }
+        }
+        if (ok) return i;
+    }
+    return std::string::npos;
+}
+std::string toLowerAscii(std::string s) {
+    for (auto& c : s) if (c >= 'A' && c <= 'Z') c = char(c + 32);
+    return s;
+}
+} // namespace
+
+int DocumentEditor::replaceAll(const std::string& from, const std::string& to) {
+    if (from.empty()) return 0;
+    int count = 0;
+    const size_t n = paragraphCount();
+    const std::string lowNeedle = toLowerAscii(from);
+    for (size_t flat = 0; flat < n; ++flat) {
+        Paragraph* p = paragraphAt(flat);
+        if (!p) continue;
+        std::string text = paragraphText(flat);
+        // 计数
+        int hits = 0;
+        for (size_t at = 0; (at = findICase(text, from, at)) != std::string::npos; at += from.size())
+            ++hits;
+        if (!hits) continue;
+        // 替换（大小写不敏感分段拼接）
+        std::string out;
+        size_t pos = 0;
+        while (true) {
+            size_t at = findICase(text, from, pos);
+            if (at == std::string::npos) { out += text.substr(pos); break; }
+            out += text.substr(pos, at - pos);
+            out += to;
+            pos = at + from.size();
+        }
+        RunList newRuns;
+        TextRun r = p->runs.empty() ? TextRun{} : p->runs.front();
+        r.text = out;
+        newRuns.push_back(r);
+        RunList oldRuns = p->runs;
+        replaceRunsCommand(flat, std::move(oldRuns), std::move(newRuns), "replace-all");
+        count += hits;
+    }
+    return count;
+}
+
 void DocumentEditor::replaceRunsCommand(size_t flatPara, RunList oldRuns, RunList newRuns,
                                         const std::string& name) {
     stack_.execute(CommandStack::makeCmd(
