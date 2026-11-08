@@ -2,6 +2,10 @@
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QImage>
+#include <QBrush>
+#include <QColor>
+#include <QTextCharFormat>
+#include <map>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -48,6 +52,26 @@ QVector<QTextLayout::FormatRange> formatsFor(const oc::Paragraph& p, const QFont
         if (r.bold)      { f.setBold(true); diff = true; }
         if (r.italic)    { f.setItalic(true); diff = true; }
         if (r.underline) { f.setUnderline(true); diff = true; }
+        if (r.strike)    { f.setStrikeOut(true); diff = true; }
+        if (!r.color.empty()) {
+            fmt.setForeground(QBrush(QColor(QString::fromStdString("#" + r.color))));
+            diff = true;
+        }
+        if (!r.highlight.empty()) {
+            static const std::map<std::string, const char*> hlColors = {
+                {"yellow", "#FFE100"}, {"bright_green", "#00FF00"}, {"green", "#00B050"},
+                {"cyan", "#00FFFF"}, {"magenta", "#FF00FF"}, {"blue", "#00B0F0"},
+                {"red", "#FF0000"}, {"darkBlue", "#002060"}, {"darkYellow", "#808000"},
+                {"darkGreen", "#375623"}, {"darkCyan", "#00838F"}, {"darkMagenta", "#7030A0"},
+                {"lightGray", "#C0C0C0"}, {"darkGray", "#808080"}, {"black", "#000000"},
+                {"white", "#FFFFFF"},
+            };
+            auto it = hlColors.find(r.highlight);
+            if (it != hlColors.end()) {
+                fmt.setBackground(QBrush(QColor(it->second)));
+                diff = true;
+            }
+        }
         if (r.fontSizePt > 0) { f.setPointSizeF(r.fontSizePt); diff = true; }
         if (!r.fontEastAsia.empty()) { f.setFamily(QString::fromStdString(r.fontEastAsia)); diff = true; }
         else if (!r.fontAscii.empty()) { f.setFamily(QString::fromStdString(r.fontAscii)); diff = true; }
@@ -708,6 +732,47 @@ bool PageView::fontNameSelection(const QString& family) {
     return true;
 }
 
+bool PageView::strikeSelection(bool val) {
+    if (!ed_) return false;
+    const bool hasSel = !(anchor_ == cursor_);
+    if (hasSel) {
+        DocPos a = anchor_ < cursor_ ? anchor_ : cursor_;
+        DocPos b = cursor_ < anchor_ ? anchor_ : cursor_;
+        ed_->setStrike(a, b, val);
+    } else ed_->setStrike(cursor_, cursor_, val);
+    relayoutAndKeepCursor();
+    emit edited();
+    return true;
+}
+
+bool PageView::textColorSelection(const QString& hexRgb) {
+    if (!ed_) return false;
+    const std::string n = hexRgb.toStdString();
+    const bool hasSel = !(anchor_ == cursor_);
+    if (hasSel) {
+        DocPos a = anchor_ < cursor_ ? anchor_ : cursor_;
+        DocPos b = cursor_ < anchor_ ? anchor_ : cursor_;
+        ed_->setTextColor(a, b, n);
+    } else ed_->setTextColor(cursor_, cursor_, n);
+    relayoutAndKeepCursor();
+    emit edited();
+    return true;
+}
+
+bool PageView::highlightSelection(const QString& colorName) {
+    if (!ed_) return false;
+    const std::string n = colorName.toStdString();
+    const bool hasSel = !(anchor_ == cursor_);
+    if (hasSel) {
+        DocPos a = anchor_ < cursor_ ? anchor_ : cursor_;
+        DocPos b = cursor_ < anchor_ ? anchor_ : cursor_;
+        ed_->setHighlight(a, b, n);
+    } else ed_->setHighlight(cursor_, cursor_, n);
+    relayoutAndKeepCursor();
+    emit edited();
+    return true;
+}
+
 bool PageView::paraStyleSelection(const QString& styleId) {
     if (!ed_) return false;
     ed_->setParaStyle(cursor_.para, styleId.toStdString());
@@ -741,8 +806,11 @@ PageView::FormatHints PageView::formatHints() const {
         h.bold = r.bold;
         h.italic = r.italic;
         h.underline = r.underline;
+        h.strike = r.strike;
         h.sizePt = r.fontSizePt;
         h.eastAsia = QString::fromStdString(r.fontEastAsia);
+        h.color = QString::fromStdString(r.color);
+        h.highlight = QString::fromStdString(r.highlight);
     }
     return h;
 }
