@@ -478,6 +478,39 @@ int DocumentEditor::replaceAll(const std::string& from, const std::string& to) {
     return count;
 }
 
+bool DocumentEditor::setIndent(size_t flatPara, uint32_t left, uint32_t right, int firstLine) {
+    ParaLoc loc = locate(flatPara);
+    if (!loc.p) return false;
+    uint32_t ol = loc.p->indLeftTw, orr = loc.p->indRightTw;
+    int ofl = loc.p->indFirstLineTw;
+    size_t para = flatPara;
+    stack_.execute(CommandStack::makeCmd(
+        "indent",
+        [this, para, ol, orr, ofl] {
+            if (Paragraph* p = paragraphAt(para)) {
+                p->indLeftTw = ol; p->indRightTw = orr; p->indFirstLineTw = ofl;
+            }
+        },
+        [this, para, left, right, firstLine] {
+            if (Paragraph* p = paragraphAt(para)) {
+                p->indLeftTw = left; p->indRightTw = right; p->indFirstLineTw = firstLine;
+            }
+        }));
+    return true;
+}
+
+bool DocumentEditor::setLineSpacing(size_t flatPara, uint32_t line240) {
+    ParaLoc loc = locate(flatPara);
+    if (!loc.p) return false;
+    uint32_t old = loc.p->lineSpacing;
+    size_t para = flatPara;
+    stack_.execute(CommandStack::makeCmd(
+        "linespacing",
+        [this, para, old] { if (Paragraph* p = paragraphAt(para)) p->lineSpacing = old; },
+        [this, para, line240] { if (Paragraph* p = paragraphAt(para)) p->lineSpacing = line240; }));
+    return true;
+}
+
 void DocumentEditor::replaceRunsCommand(size_t flatPara, RunList oldRuns, RunList newRuns,
                                         const std::string& name) {
     stack_.execute(CommandStack::makeCmd(
