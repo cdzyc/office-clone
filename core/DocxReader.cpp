@@ -238,12 +238,20 @@ bool DocxReader::parseDocumentXml(const std::vector<uint8_t>& xml, Document& doc
                 continue;
             }
             if (tag == "w:ind") {
-                curPara.indLeftTw = parseU(p.attr("w:left"));
-                curPara.indRightTw = parseU(p.attr("w:right"));
+                // ⚠️ 真机战报 #5：OOXML 允许负缩进（如 left=-425），
+                // uint32 解析会爆成 42 亿 → 渲染行宽为负 → 崩溃。一律 clamp ≥0。
+                auto parseUClamped = [](const std::string* s) -> uint32_t {
+                    if (!s || s->empty()) return 0;
+                    long v = strtol(s->c_str(), nullptr, 10);
+                    return v > 0 ? (uint32_t)v : 0;
+                };
+                curPara.indLeftTw = parseUClamped(p.attr("w:left"));
+                curPara.indRightTw = parseUClamped(p.attr("w:right"));
+                curPara.indFirstLineTw = 0;
                 if (const std::string* fl = p.attr("w:firstLine"))
-                    curPara.indFirstLineTw = (int)parseU(fl);
+                    curPara.indFirstLineTw = (int)parseUClamped(fl);
                 else if (const std::string* hg = p.attr("w:hanging"))
-                    curPara.indFirstLineTw = -(int)parseU(hg);
+                    curPara.indFirstLineTw = -(int)parseUClamped(hg);
                 continue;
             }
             if (tag == "w:gridSpan") {
