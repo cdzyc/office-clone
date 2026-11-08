@@ -58,6 +58,8 @@ public:
     // 段落级 runs 整体替换（查找替换/导入重构用；命令化可撤销）
     void replaceRunsCommand(size_t flatPara, RunList oldRuns, RunList newRuns,
                             const std::string& name);
+    // 全文档查找替换（大小写不敏感，保留段首格式；返回替换数；逐段命令可撤销）
+    int replaceAll(const std::string& from, const std::string& to);
 
     // ---- 剪贴板（M2.6）----
     // 复制 [from, to) 为富文本片段（跨段支持，保留 run 格式与段落结构）
