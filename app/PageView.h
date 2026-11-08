@@ -9,6 +9,7 @@
 #include "../core/Clipboard.h"
 #include "../core/Document.h"
 #include "../core/EditCommands.h"
+#include "../core/ImageCache.h"
 #include <QAbstractScrollArea>
 #include <QTextLayout>
 #include <memory>
@@ -23,6 +24,7 @@ public:
     void setDocument(std::shared_ptr<const oc::Document> doc);
     // 编辑上下文（MainWindow 持有 doc/stack/editor 并注入）
     void attachEditor(oc::DocumentEditor* ed, oc::CommandStack* cs);
+    void attachImageCache(oc::ImageCache* cache);   // 图片按需解码+LRU
 
     bool canUndo() const;
     bool canRedo() const;
@@ -78,6 +80,9 @@ private:
         qreal y = 0, h = 0, x = 0;      // x：文本绘制左缘（表格内段落有列偏移）
         QVector<QTextLine> lines;
         QFont font;
+        struct Img { QString relId; qreal w = 0, h = 0; };
+        QVector<Img> imgs;              // 段内图片（真实显示）
+        qreal imgBlockH = 0;            // 图片区高度（文本前置）
     };
     struct TableBox {                   // 表格（真机战报 #3：WPS 可见表格必须渲染）
         qreal y = 0, h = 0, w = 0;
@@ -98,6 +103,10 @@ private:
     // 大纲导航：滚动到指定段
 public:
     void scrollToPara(size_t flat);
+    // 查找替换（大小写不敏感；findNext 命中跳转并选中）
+    bool findNext(const QString& needle);
+    int replaceAll(const QString& from, const QString& to);   // 返回替换次数
+    void pasteText(const QString& text);                      // 替换当前选中后插入
 private:
     std::vector<ParaBox> boxes_;
     std::vector<TableBox> tables_;
@@ -115,6 +124,8 @@ private:
     std::shared_ptr<const oc::Document> doc_;
     oc::DocumentEditor* ed_ = nullptr;
     oc::CommandStack* cs_ = nullptr;
+    oc::ImageCache* cache_ = nullptr;   // 图片缓存（MainWindow 持有）
+    DocPos charToDocPos(size_t flat, int charIdx) const;  // 字符下标→run/字节偏移
 };
 
 } // namespace oc::qt
