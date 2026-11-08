@@ -1,6 +1,7 @@
 #include "PageView.h"
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QImage>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -92,6 +93,12 @@ void PageView::attachEditor(oc::DocumentEditor* ed, oc::CommandStack* cs) {
     cs_ = cs;
 }
 
+void PageView::attachImageCache(oc::ImageCache* cache) {
+    cache_ = cache;
+    rebuildLayout();
+    viewport()->update();
+}
+
 // ---------------- 布局 ----------------
 
 void PageView::rebuildLayout() {
@@ -125,8 +132,18 @@ void PageView::rebuildLayout() {
             b.lines.append(line);
         }
         b.layout->endLayout();
-        // ⚠️ 逐行纵向定位（修复真机战报 #2：行叠画）
-        qreal lineY = 0;
+        // 图片区（文本前置）：等比缩放至段宽内，真实尺寸 EMU→px(96dpi)
+        for (const auto& im : p->images) {
+            qreal w = im.cxEmu / 9525.0, h = im.cyEmu / 9525.0;
+            if (w > width) { h = h * width / w; w = width; }
+            if (w < 1 || h < 1) { w = 120; h = 90; }
+            ParaBox::Img bi; bi.relId = QString::fromStdString(im.relId);
+            bi.w = w; bi.h = h;
+            b.imgs.append(bi);
+            b.imgBlockH += h + 4;
+        }
+        // ⚠️ 逐行纵向定位（图片区之下；修复真机战报 #2：行叠画）
+        qreal lineY = b.imgBlockH;
         for (auto& l : b.lines) {
             l.setPosition(QPointF(0, lineY));
             lineY += l.height() + lineGap_;
@@ -332,8 +349,26 @@ void PageView::paintEvent(QPaintEvent*) {
                        QColor(0xD8, 0xE4, 0xFA));
         }
 
-        // 文本（含每 run 富格式：逐 run 分段绘制会破坏整段断行——首版整段用统一字体，
-        // 富格式（加粗等）视觉从 M2.5+ 的 QTextLayout setFormats 接入）
+        // 图片真实显示（ImageCache 按需解码 + LRU；未命中画灰框占位）
+        if (!b.imgs.isEmpty()) {
+            qreal ix = b.x, iy = b.y - scrollY;
+            for (const auto& im : b.imgs) {
+                const oc::DecodedImage* di = cache_
+                    ? cache_->get(im.relId.toStdString(), (uint32_t)im.w, (uint32_t)im.h)
+                    : nullptr;
+                if (di && !di->rgba.empty()) {
+                    QImage qimg(di->rgba.data(), (int)di->width, (int)di->height,
+                                (int)di->width * 4, QImage::Format_RGBA8888);
+                    p.drawImage(QRectF(ix, iy, im.w, im.h), qimg);
+                } else {
+                    p.fillRect(QRectF(ix, iy, im.w, im.h), QColor(0xF2, 0xF3, 0xF7));
+                    p.setPen(QColor(0xC0, 0xC4, 0xCC));
+                    p.drawRect(QRectF(ix, iy, im.w, im.h));
+                }
+                iy += im.h + 4;
+            }
+        }
+        // 文本（含每 run 富格式）
         b.layout->draw(&p, QPointF(b.x, b.y - scrollY));
 
         // 图片占位（段内含图）
@@ -758,6 +793,105 @@ void PageView::selectAll() {
     anchor_ = DocPos{};
     cursor_ = endOfPara(ed_->paragraphCount() - 1);
     viewport()->update();
+}
+
+DocPos PageView::charToDocPos(size_t flat, int charIdx) const {
+    DocPos pos;
+    pos.para = flat;
+    const oc::Paragraph* p = ed_ ? ed_->paragraphAt(flat) : nullptr;
+    if (!p || p->runs.empty()) return pos;
+    int left = charIdx;
+    for (size_t r = 0; r < p->runs.size(); ++r) {
+        int chars = (int)QString::fromStdString(p->runs[r].text).size();
+        if (left <= chars) {
+            pos.run = r;
+            pos.off = (size_t)QString::fromStdString(p->runs[r].text)
+                          .left(left).toUtf8().size();
+            return pos;
+        }
+        left -= chars;
+    }
+    pos.run = p->runs.size() - 1;
+    pos.off = p->runs.back().text.size();
+    return pos;
+}
+
+bool PageView::findNext(const QString& needle) {
+    if (!ed_ || needle.isEmpty()) return false;
+    const size_t n = ed_->paragraphCount();
+    // 从光标处顺向环形搜索
+    int startChar = 0;
+    {
+        const oc::Paragraph* cp = ed_->paragraphAt(cursor_.para);
+        if (cp) {
+            int c = 0;
+            for (size_t r = 0; r < cursor_.run && r < cp->runs.size(); ++r)
+                c += QString::fromStdString(cp->runs[r].text).size();
+            c += (int)QString::fromStdString(
+                     cp->runs[cursor_.run].text).left((int)cursor_.off).size();
+            startChar = c + 1;                      // 光标之后
+        }
+    }
+    for (size_t off = 0; off < n; ++off) {
+        size_t flat = cursor_.para + off < n ? cursor_.para + off : cursor_.para + off - n;
+        QString text = paraText(flat);
+        int from = (off == 0) ? startChar : 0;
+        int idx = text.indexOf(needle, from, Qt::CaseInsensitive);
+        if (idx >= 0) {
+            DocPos a = charToDocPos(flat, idx);
+            DocPos b = charToDocPos(flat, idx + needle.size());
+            anchor_ = a;
+            cursor_ = b;
+            scrollToPara(flat);
+            return true;
+        }
+    }
+    return false;
+}
+
+int PageView::replaceAll(const QString& from, const QString& to) {
+    if (!ed_ || from.isEmpty()) return 0;
+    int count = 0;
+    const size_t n = ed_->paragraphCount();
+    for (size_t flat = 0; flat < n; ++flat) {
+        const oc::Paragraph* p = ed_->paragraphAt(flat);
+        if (!p) continue;
+        QString text = paraText(flat);
+        int hits = 0, at = 0;
+        while ((at = text.indexOf(from, at, Qt::CaseInsensitive)) >= 0) {
+            ++hits; at += from.size();
+        }
+        if (!hits) continue;
+        QString replaced = text;
+        replaced.replace(from, to, Qt::CaseInsensitive);
+        // 保留段首 run 格式的新文本（段落级快照命令，可整体撤销）
+        oc::RunList newRuns;
+        oc::TextRun r = p->runs.empty() ? oc::TextRun{} : p->runs.front();
+        r.text = replaced.toStdString();
+        newRuns.push_back(r);
+        oc::RunList oldRuns = p->runs;
+        ed_->replaceRunsCommand(flat, std::move(oldRuns), std::move(newRuns),
+                                QStringLiteral("replace").toStdString());
+        count += hits;
+    }
+    if (count) {
+        relayoutAndKeepCursor();
+        emit edited();
+    }
+    return count;
+}
+
+void PageView::pasteText(const QString& text) {
+    if (!ed_ || text.isEmpty()) return;
+    const bool hasSel = !(anchor_ == cursor_);
+    DocPos selStart = anchor_ < cursor_ ? anchor_ : cursor_;
+    DocPos selEnd = cursor_ < anchor_ ? anchor_ : cursor_;
+    if (hasSel) { ed_->deleteRange(selStart, selEnd); cursor_ = selStart; }
+    ed_->insertText(cursor_, text.toUtf8().toStdString());
+    cursor_.off += text.toUtf8().size();
+    anchor_ = cursor_;
+    relayoutAndKeepCursor();
+    emit edited();
 }
 
 void PageView::scrollToPara(size_t flat) {
