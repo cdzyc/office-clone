@@ -64,6 +64,9 @@ private:
     QToolButton* boldBtn_ = nullptr;
     QToolButton* italicBtn_ = nullptr;
     QToolButton* underlineBtn_ = nullptr;
+    QToolButton* strikeBtn_ = nullptr;
+    QComboBox* colorCombo_ = nullptr;
+    QComboBox* hlCombo_ = nullptr;
     QActionGroup* alignGroup_ = nullptr;
     QList<QAction*> alignActs_;
     bool syncingToolbar_ = false;
