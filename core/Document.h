@@ -19,6 +19,9 @@ struct TextRun {
     double fontSizePt = 0;     // 0 = 继承样式/默认
     std::string fontAscii;     // w:rFonts/@w:ascii（西文字体）
     std::string fontEastAsia;  // w:rFonts/@w:eastAsia（中文字体——标书关键）
+    bool strike = false;       // w:strike 删除线
+    std::string color;         // w:color/@w:val 十六进制 RGB（空=自动黑）
+    std::string highlight;     // w:highlight/@w:val（空=无；yellow/green/red…）
 };
 
 using RunList = std::vector<TextRun>;
