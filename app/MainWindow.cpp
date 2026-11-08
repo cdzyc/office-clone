@@ -319,6 +319,56 @@ void MainWindow::buildToolbar() {
 
     tb->addSeparator();
 
+    // 批次B：行距下拉
+    auto* lineCombo = new QComboBox(this);
+    struct LS { const char* name; double f; };
+    const LS lss[] = {{"1.0", 1.0}, {"1.15", 1.15}, {"1.5", 1.5}, {"2.0", 2.0}, {"2.5", 2.5}, {"3.0", 3.0}};
+    for (const auto& l : lss) lineCombo->addItem(QString::fromUtf8(l.name), l.f);
+    lineCombo->setToolTip(tr("行距"));
+    tb->addWidget(lineCombo);
+    connect(lineCombo, qOverload<int>(&QComboBox::activated), this, [this, lineCombo](int idx) {
+        if (!syncingToolbar_)
+            view_->lineSpacingSelection(lineCombo->itemData(idx).toDouble());
+    });
+
+    // 缩进：减少/增加/首行
+    auto* indLess = new QToolButton(this);
+    indLess->setText(tr("⇤"));
+    indLess->setToolTip(tr("减少缩进"));
+    indLess->setAutoRaise(true);
+    tb->addWidget(indLess);
+    connect(indLess, &QToolButton::clicked, this, [this]() { view_->indentSelection(-1); });
+    auto* indMore = new QToolButton(this);
+    indMore->setText(tr("⇥"));
+    indMore->setToolTip(tr("增加缩进"));
+    indMore->setAutoRaise(true);
+    tb->addWidget(indMore);
+    connect(indMore, &QToolButton::clicked, this, [this]() { view_->indentSelection(1); });
+    auto* indFirst = new QToolButton(this);
+    indFirst->setText(tr("⇥̄"));
+    indFirst->setToolTip(tr("首行缩进（2字符，点击切换）"));
+    indFirst->setAutoRaise(true);
+    tb->addWidget(indFirst);
+    connect(indFirst, &QToolButton::clicked, this, [this]() { view_->firstLineIndentSelection(); });
+
+    tb->addSeparator();
+
+    // 列表：圆点/编号
+    auto* bulletBtn = new QToolButton(this);
+    bulletBtn->setText(tr("•≡"));
+    bulletBtn->setToolTip(tr("项目符号列表（回车自动续）"));
+    bulletBtn->setAutoRaise(true);
+    tb->addWidget(bulletBtn);
+    connect(bulletBtn, &QToolButton::clicked, this, [this]() { view_->toggleList(false); });
+    auto* numBtn = new QToolButton(this);
+    numBtn->setText(tr("1.≡"));
+    numBtn->setToolTip(tr("编号列表（回车自动递增）"));
+    numBtn->setAutoRaise(true);
+    tb->addWidget(numBtn);
+    connect(numBtn, &QToolButton::clicked, this, [this]() { view_->toggleList(true); });
+
+    tb->addSeparator();
+
     // 对齐（互斥）
     alignGroup_ = new QActionGroup(this);
     alignActs_.clear();
