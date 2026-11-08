@@ -406,6 +406,14 @@ bool DocumentEditor::setParaStyle(size_t flatPara, const std::string& styleId) {
     return true;
 }
 
+void DocumentEditor::replaceRunsCommand(size_t flatPara, RunList oldRuns, RunList newRuns,
+                                        const std::string& name) {
+    stack_.execute(CommandStack::makeCmd(
+        name,
+        [this, flatPara, oldRuns] { if (Paragraph* pp = paragraphAt(flatPara)) pp->runs = oldRuns; },
+        [this, flatPara, newRuns] { if (Paragraph* pp = paragraphAt(flatPara)) pp->runs = newRuns; }));
+}
+
 bool DocumentEditor::setAlign(size_t flatPara, Align a) {
     ParaLoc loc = locate(flatPara);
     if (!loc.p) return false;
