@@ -71,8 +71,10 @@ std::string DocxWriter::buildDocumentXml(const Document& doc) {
         // 文本 runs
         for (const auto& r : p.runs) {
             s += "<w:r>";
-            bool hasRpr = r.bold || r.italic || r.underline || r.fontSizePt > 0 ||
-                          !r.styleId.empty() || !r.fontAscii.empty() || !r.fontEastAsia.empty();
+            bool hasRpr = r.bold || r.italic || r.underline || r.strike ||
+                          r.fontSizePt > 0 || !r.styleId.empty() ||
+                          !r.fontAscii.empty() || !r.fontEastAsia.empty() ||
+                          !r.color.empty() || !r.highlight.empty();
             if (hasRpr) {
                 s += "<w:rPr>";
                 if (!r.styleId.empty())
@@ -80,6 +82,11 @@ std::string DocxWriter::buildDocumentXml(const Document& doc) {
                 if (r.bold) s += "<w:b/>";
                 if (r.italic) s += "<w:i/>";
                 if (r.underline) s += "<w:u/>";
+                if (r.strike) s += "<w:strike/>";
+                if (!r.color.empty())
+                    s += "<w:color w:val=\"" + xmlEscape(r.color) + "\"/>";
+                if (!r.highlight.empty())
+                    s += "<w:highlight w:val=\"" + xmlEscape(r.highlight) + "\"/>";
                 if (!r.fontAscii.empty() || !r.fontEastAsia.empty()) {
                     s += "<w:rFonts";
                     if (!r.fontAscii.empty())
