@@ -1,5 +1,6 @@
 #pragma once
 #include "../core/Document.h"
+#include "../core/ImageCache.h"
 #include "../core/ZipReader.h"
 #include <QMainWindow>
 #include <memory>
@@ -11,6 +12,7 @@ class QToolButton;
 class QActionGroup;
 class QTreeWidget;
 class QTreeWidgetItem;
+class QTimer;
 
 namespace oc {
 class CommandStack;
@@ -66,6 +68,9 @@ private:
     QList<QAction*> alignActs_;
     bool syncingToolbar_ = false;
     QTreeWidget* outlineTree_ = nullptr;      // 左侧大纲导航
+    QTimer* autosaveTimer_ = nullptr;         // 自动保存（静默30s）
+    class FindReplaceDialog* findDlg_ = nullptr;
+    std::unique_ptr<oc::ImageCache> imageCache_;   // 图片按需解码+LRU
     void rebuildOutline();                    // 扫描 Title/Heading 构建导航树
 
     std::shared_ptr<oc::Document> doc_;       // 可编辑文档
