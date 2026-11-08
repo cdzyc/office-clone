@@ -1,4 +1,5 @@
 #include "MainWindow.h"
+#include "FindReplace.h"
 #include "LogPanel.h"
 #include "PageView.h"
 #include "../core/CommandStack.h"
@@ -6,6 +7,7 @@
 #include "../core/DocxWriter.h"
 #include "../core/EditCommands.h"
 #include "../core/FontCheck.h"
+#include "../core/ImageCache.h"
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -27,6 +29,7 @@
 #include <QTreeWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QTimer>
 #include <chrono>
 #include <thread>
 
@@ -77,6 +80,17 @@ MainWindow::MainWindow() {
     status_ = new QLabel(tr("就绪"), this);
     statusBar()->addWidget(status_, 1);
 
+    findDlg_ = new FindReplaceDialog(view_, this);
+    autosaveTimer_ = new QTimer(this);
+    autosaveTimer_->setInterval(30 * 1000);           // 30s 无操作自动保存
+    autosaveTimer_->setSingleShot(true);
+    connect(autosaveTimer_, &QTimer::timeout, this, [this]() {
+        if (dirty_ && !openPath_.isEmpty()) {
+            logPanel_->log(QStringLiteral("INFO"), tr("自动保存触发…"));
+            onSave();
+        }
+    });
+
     buildMenu();
     buildToolbar();
     connect(view_, &PageView::edited, this, &MainWindow::onEdited);
@@ -105,6 +119,21 @@ void MainWindow::buildMenu() {
     connect(quit, &QAction::triggered, this, &QWidget::close);
 
     QMenu* edit = menuBar()->addMenu(tr("编辑(&E)"));
+    QAction* findAct = edit->addAction(tr("查找(&F)..."));
+    findAct->setShortcut(QKeySequence::Find);
+    connect(findAct, &QAction::triggered, this, [this]() { findDlg_->showFind(); });
+    QAction* repAct = edit->addAction(tr("替换(&R)..."));
+    repAct->setShortcut(QKeySequence::Replace);
+    connect(repAct, &QAction::triggered, this, [this]() { findDlg_->showReplace(); });
+    QAction* autosave = edit->addAction(tr("自动保存（静默30秒）"));
+    autosave->setCheckable(true);
+    autosave->setChecked(true);
+    connect(autosave, &QAction::toggled, this, [this](bool on) {
+        if (!on) autosaveTimer_->stop();
+        logPanel_->log(QStringLiteral("INFO"),
+                       tr("自动保存已%1").arg(on ? tr("开启") : tr("关闭")));
+    });
+    edit->addSeparator();
     auto addEdit = [&](const QString& text, QKeySequence::StandardKey key,
                        const char* slot) {
         QAction* a = edit->addAction(text);
@@ -330,8 +359,21 @@ void MainWindow::onLoaded(std::shared_ptr<oc::Document> doc, double ms, const QS
     editor_ = std::make_unique<oc::DocumentEditor>(*doc_, *stack_);
     srcZip_ = std::make_unique<ZipReader>();
     srcZip_->open(openPath_.toStdString());
+    imageCache_ = std::make_unique<oc::ImageCache>(256ull * 1024 * 1024);
+    imageCache_->setSource(openPath_.toStdString(), doc_.get());
+    imageCache_->setExternalDecoder(
+        [](const std::vector<uint8_t>& file, oc::DecodedImage& out) -> bool {
+            QImage img = QImage::fromData(file.data(), (int)file.size());
+            if (img.isNull()) return false;
+            QImage rgba = img.convertToFormat(QImage::Format_RGBA8888);
+            out.width = (uint32_t)rgba.width();
+            out.height = (uint32_t)rgba.height();
+            out.rgba.assign(rgba.bits(), rgba.bits() + rgba.sizeInBytes());
+            return true;
+        });
     view_->setDocument(doc_);
     view_->attachEditor(editor_.get(), stack_.get());
+    view_->attachImageCache(imageCache_.get());
     view_->setFocus();
     dirty_ = false;
 
@@ -344,7 +386,7 @@ void MainWindow::onLoaded(std::shared_ptr<oc::Document> doc, double ms, const QS
                            .arg(openPath_.mid(slash + 1))
                            .arg(QString::fromStdString(doc->summary()))
                            .arg(ms, 0, 'f', 0));
-    logPanel_->log(QStringLiteral("INFO"), tr("打开成功｜耗时 %1 ms").arg(ms, 0, 'f', 0));
+    logPanel_->log(QStringLiteral("INFO"), tr("打开成功｜耗时 %1 ms（图片按需解码+LRU）").arg(ms, 0, 'f', 0));
 
     std::map<QString, int> warnCount;
     for (const auto& w : warnings) ++warnCount[QString::fromStdString(w)];
@@ -402,6 +444,7 @@ void MainWindow::rebuildOutline() {
 
 void MainWindow::onEdited() {
     dirty_ = true;
+    autosaveTimer_->start();                          // 静默 30s 后自动保存
     if (!openPath_.isEmpty())
         setWindowTitle(tr("%1* — Office Clone").arg(QFileInfo(openPath_).fileName()));
     status_->setText(tr("已修改（Ctrl+S 保存）｜ %1")
