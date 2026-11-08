@@ -37,7 +37,9 @@ struct Paragraph {
     std::string styleId;       // w:pStyle（段落样式，Heading1 等）
     Align align = Align::Left;
     uint32_t spacingBeforePt16 = 0, spacingAfterPt16 = 0;  // 1/16 pt（OOXML 原始单位 twentieths）
-    uint32_t lineSpacing = 0;                             // 240 = 单倍
+    uint32_t lineSpacing = 0;                             // 240 = 单倍（480=双倍）
+    uint32_t indLeftTw = 0, indRightTw = 0;               // w:ind 左右缩进（twips）
+    int indFirstLineTw = 0;                               // 首行缩进（负=悬挂）
 };
 
 struct TableCell {
