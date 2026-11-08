@@ -52,6 +52,9 @@ public:
     // 段落样式（正文/标题1…）与对齐
     bool setParaStyle(size_t flatPara, const std::string& styleId);
     bool setAlign(size_t flatPara, Align a);
+    // 段落级 runs 整体替换（查找替换/导入重构用；命令化可撤销）
+    void replaceRunsCommand(size_t flatPara, RunList oldRuns, RunList newRuns,
+                            const std::string& name);
 
     // ---- 剪贴板（M2.6）----
     // 复制 [from, to) 为富文本片段（跨段支持，保留 run 格式与段落结构）
