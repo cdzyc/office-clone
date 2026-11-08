@@ -150,7 +150,8 @@ void PageView::rebuildLayout() {
         const qreal indL = p->indLeftTw / 15.0, indR = p->indRightTw / 15.0;
         const qreal indFL = p->indFirstLineTw / 15.0;
         b.textX = x + indL;
-        b.textW = width - indL - indR;
+        // ⚠️ 行宽下限保护：缩进再大也不允许 ≤40px（防负宽死循环——真机战报 #5 崩溃根因）
+        b.textW = std::max(qreal(40), width - indL - indR);
         b.firstLineIndent = indFL;
         b.lineFactor = p->lineSpacing > 0 ? (p->lineSpacing / 240.0) : 1.0;
 
@@ -178,9 +179,12 @@ void PageView::rebuildLayout() {
         // ⚠️ 逐行纵向定位（图片区之下；修复真机战报 #2：行叠画）
         qreal lineY = b.imgBlockH;
         const qreal factor = b.lineFactor > 0.01 ? b.lineFactor : 1.0;
+        bool firstLine = true;
         for (auto& l : b.lines) {
-            l.setPosition(QPointF(0, lineY));
+            const qreal lx = firstLine ? std::max(qreal(0), b.firstLineIndent) : 0;
+            l.setPosition(QPointF(lx, lineY));
             lineY += l.height() * factor + lineGap_;
+            firstLine = false;
         }
         b.h = qMax(lineY - lineGap_, 18.0) + paraGap_;
         b.y = y;
@@ -284,7 +288,7 @@ DocPos PageView::hitPos(const QPointF& docPt) const {
         if (docPt.y() - b.y < l.y() + l.height() + lineGap_) { hitLine = l; break; }
     if (!hitLine.isValid() && !b.lines.isEmpty()) hitLine = b.lines.last();
     int charPos = hitLine.isValid()
-                      ? hitLine.xToCursor(docPt.x() - b.x, QTextLine::CursorOnCharacter)
+                      ? hitLine.xToCursor(docPt.x() - b.textX, QTextLine::CursorOnCharacter)
                       : 0;
     // charPos（QString 字符下标）→ (run, off) UTF-8 字节偏移
     const oc::Paragraph* p = ed_->paragraphAt((size_t)b.flat);
@@ -403,13 +407,7 @@ void PageView::paintEvent(QPaintEvent*) {
             }
         }
         // 文本（含每 run 富格式）
-        // 文本绘制（缩进后 x + 首行缩进作用于第一行）
-        if (!b.lines.isEmpty() && b.firstLineIndent != 0) {
-            // QTextLayout 整体绘制；首行缩进用临时平移近似（首行单独画，其余整体）
-            b.layout->draw(&p, QPointF(b.textX + b.firstLineIndent, b.y - scrollY));
-        } else {
-            b.layout->draw(&p, QPointF(b.textX, b.y - scrollY));
-        }
+        b.layout->draw(&p, QPointF(b.textX, b.y - scrollY));
 
         // 图片占位（段内含图）
         if (!para->images.empty()) {
@@ -435,7 +433,7 @@ void PageView::paintEvent(QPaintEvent*) {
             QTextLine line = b.layout->lineForTextPosition(charPos);
             if (!line.isValid() && !b.lines.isEmpty()) line = b.lines.last();
             if (line.isValid()) {
-                qreal cx = b.x + line.cursorToX(charPos);
+                qreal cx = b.textX + line.cursorToX(charPos);
                 qreal cy = b.y - scrollY + line.y();
                 p.setPen(QColor(0x20, 0x20, 0x20));
                 p.drawLine(QPointF(cx, cy + 1), QPointF(cx, cy + line.height() + 1));
