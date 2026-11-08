@@ -49,6 +49,9 @@ public:
     bool setFontSize(DocPos from, DocPos to, double pt);
     bool setFontName(DocPos from, DocPos to, const std::string& eastAsia,
                      const std::string& ascii);
+    bool setStrike(DocPos from, DocPos to, bool val);
+    bool setTextColor(DocPos from, DocPos to, const std::string& hexRgb);
+    bool setHighlight(DocPos from, DocPos to, const std::string& colorName);
     // 段落样式（正文/标题1…）与对齐
     bool setParaStyle(size_t flatPara, const std::string& styleId);
     bool setAlign(size_t flatPara, Align a);
