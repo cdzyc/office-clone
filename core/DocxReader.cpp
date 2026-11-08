@@ -237,6 +237,15 @@ bool DocxReader::parseDocumentXml(const std::vector<uint8_t>& xml, Document& doc
                 curPara.lineSpacing = parseU(p.attr("w:line"), 240);
                 continue;
             }
+            if (tag == "w:ind") {
+                curPara.indLeftTw = parseU(p.attr("w:left"));
+                curPara.indRightTw = parseU(p.attr("w:right"));
+                if (const std::string* fl = p.attr("w:firstLine"))
+                    curPara.indFirstLineTw = (int)parseU(fl);
+                else if (const std::string* hg = p.attr("w:hanging"))
+                    curPara.indFirstLineTw = -(int)parseU(hg);
+                continue;
+            }
             if (tag == "w:gridSpan") {
                 curCell.gridSpan = parseU(p.attr("w:val"), 1);
                 continue;
