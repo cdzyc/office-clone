@@ -60,6 +60,9 @@ public:
                             const std::string& name);
     // 全文档查找替换（大小写不敏感，保留段首格式；返回替换数；逐段命令可撤销）
     int replaceAll(const std::string& from, const std::string& to);
+    // 段落缩进（twips；firstLine 负=悬挂）与行距（240=单倍）
+    bool setIndent(size_t flatPara, uint32_t left, uint32_t right, int firstLine);
+    bool setLineSpacing(size_t flatPara, uint32_t line240);
 
     // ---- 剪贴板（M2.6）----
     // 复制 [from, to) 为富文本片段（跨段支持，保留 run 格式与段落结构）
