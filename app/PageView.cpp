@@ -12,6 +12,7 @@
 #include <QPaintEvent>
 #include <QScrollBar>
 #include <QTextOption>
+#include <QWheelEvent>
 #include <QRegularExpression>
 #include <algorithm>
 
@@ -19,13 +20,14 @@ namespace oc::qt {
 namespace {
 
 // 段落字体（样式区分：Title/Heading 大字号加粗）
-QFont fontFor(const oc::Paragraph& p, const QFont& base) {
+QFont fontFor(const oc::Paragraph& p, const QFont& base, double zoom = 1.0) {
     QFont f = base;
-    if (p.styleId == "Title")          { f.setPointSizeF(17); f.setBold(true); }
-    else if (p.styleId == "Heading1")  { f.setPointSizeF(15); f.setBold(true); }
-    else if (p.styleId == "Heading2")  { f.setPointSizeF(13); f.setBold(true); }
-    else if (p.styleId == "Heading3")  { f.setPointSizeF(11.5); f.setBold(true); }
-    else                               { f.setPointSizeF(10.5); }
+    auto z = [zoom](qreal pt) { return pt * zoom; };
+    if (p.styleId == "Title")          { f.setPointSizeF(z(17)); f.setBold(true); }
+    else if (p.styleId == "Heading1")  { f.setPointSizeF(z(15)); f.setBold(true); }
+    else if (p.styleId == "Heading2")  { f.setPointSizeF(z(13)); f.setBold(true); }
+    else if (p.styleId == "Heading3")  { f.setPointSizeF(z(11.5)); f.setBold(true); }
+    else                               { f.setPointSizeF(z(10.5)); }
     return f;
 }
 
@@ -109,8 +111,28 @@ void PageView::setDocument(std::shared_ptr<const oc::Document> doc) {
     cursor_ = DocPos{};
     anchor_ = DocPos{};
     verticalScrollBar()->setValue(0);
+    if (doc_) {                                        // 页面几何（twips→px@96）
+        pageW_ = doc_->page.pageWidthTw / 15.0;
+        pageH_ = doc_->page.pageHeightTw / 15.0;
+        marginTop_ = doc_->page.marginTopTw / 15.0;
+        marginBottom_ = doc_->page.marginBottomTw / 15.0;
+        marginLeft_ = doc_->page.marginLeftTw / 15.0;
+        marginRight_ = doc_->page.marginRightTw / 15.0;
+    }
     rebuildLayout();
     viewport()->update();
+}
+
+qreal PageView::pageVisualHeight() const {
+    return (pageH_ + 28) * zoom_;                     // 28px 页间距视觉
+}
+
+void PageView::setZoom(double z) {
+    z = qBound(0.5, z, 4.0);
+    if (qFuzzyCompare(z, zoom_)) return;
+    zoom_ = z;
+    relayoutAndKeepCursor();
+    emit zoomChanged(zoom_);
 }
 
 void PageView::attachEditor(oc::DocumentEditor* ed, oc::CommandStack* cs) {
@@ -129,13 +151,30 @@ void PageView::attachImageCache(oc::ImageCache* cache) {
 void PageView::rebuildLayout() {
     boxes_.clear();
     tables_.clear();
-    docHeight_ = topPad_;
+    pageBreaks_.clear();
+    const qreal Z = zoom_;                            // 全布局尺寸缩放因子
+    const qreal mX = textMarginX_ * Z;
+    const qreal lineGap = lineGap_ * Z, paraGap = paraGap_ * Z;
+    // 页几何（视觉坐标 = 纸面 px × zoom + 页间距）
+    const qreal pgH = pageH_ * Z, pgGap = 28.0;
+    const qreal pgTop0 = rulerH_ + 12.0;              // 第一页顶部（标尺下）
+    const qreal bodyTop = marginTop_ * Z, bodyBot = marginBottom_ * Z;
+    const qreal bodyH = pgH - bodyTop - bodyBot;      // 单页正文区高
+    auto pageContentBottom = [&](int page) {
+        return pgTop0 + page * (pgH + pgGap) + bodyTop + bodyH;
+    };
+    auto nextPageContentTop = [&](int page) {
+        return pgTop0 + (page + 1) * (pgH + pgGap) + bodyTop;
+    };
+    int curPage = 0;
+    qreal docY = pgTop0 + bodyTop;                    // 当前页正文起点
+    docHeight_ = docY;
     if (!doc_) {
         updateScrollRange();
         return;
     }
     // 文档流布局：遍历 body 节点（段落 + 表格）。flat 编址与 DocumentEditor 一致。
-    const qreal textW = qreal(std::max(160, viewport()->width() - 2 * textMarginX_));
+    const qreal textW = qMax(qreal(160), (pageW_ - marginLeft_ - marginRight_) * Z);
     size_t flat = 0;
 
     auto layoutParagraph = [&](const oc::Paragraph* p, size_t flatIdx, qreal x, qreal width,
@@ -168,9 +207,9 @@ void PageView::rebuildLayout() {
         b.layout->endLayout();
         // 图片区（文本前置）：等比缩放至段宽内，真实尺寸 EMU→px(96dpi)
         for (const auto& im : p->images) {
-            qreal w = im.cxEmu / 9525.0, h = im.cyEmu / 9525.0;
+            qreal w = im.cxEmu / 9525.0 * Z, h = im.cyEmu / 9525.0 * Z;
             if (w > width) { h = h * width / w; w = width; }
-            if (w < 1 || h < 1) { w = 120; h = 90; }
+            if (w < 1 || h < 1) { w = 120 * Z; h = 90 * Z; }
             ParaBox::Img bi; bi.relId = QString::fromStdString(im.relId);
             bi.w = w; bi.h = h;
             b.imgs.append(bi);
@@ -211,7 +250,7 @@ void PageView::rebuildLayout() {
             if (cols == 0) { ++flat; continue; }
             // 列几何：正确累计起点（colX[c] = 前列右缘）
             {
-                qreal x = textMarginX_;
+                qreal x = mX;
                 for (size_t c = 0; c < cols; ++c) {
                     qreal w = (t.colWidthsDxa.size() == cols)
                                   ? textW * t.colWidthsDxa[c] / (dxaSum > 0 ? dxaSum : 1)
@@ -252,7 +291,7 @@ void PageView::rebuildLayout() {
             docHeight_ += 10;
         }
     }
-    docHeight_ += topPad_;
+    docHeight_ = qMax(docY, docHeight_) + bodyBot + 16;
     updateScrollRange();
 }
 
@@ -341,7 +380,45 @@ DocPos PageView::endOfPara(size_t flat) const {
 
 void PageView::paintEvent(QPaintEvent*) {
     QPainter p(viewport());
-    p.fillRect(viewport()->rect(), QColor(0xFF, 0xFF, 0xFF));
+    p.fillRect(viewport()->rect(), QColor(0x52, 0x54, 0x5A));
+    const int scrollY = verticalScrollBar()->value();
+    const qreal Z = zoom_;
+    const qreal pgW = pageW_ * Z, pgH = pageH_ * Z, pgGap = 28.0;
+    const qreal pgX = qMax((viewport()->width() - pgW) / 2.0, 8.0);
+
+    // ---- 水平标尺（批次E）----
+    {
+        p.fillRect(QRect(0, 0, viewport()->width(), rulerH_), QColor(0xF5, 0xF5, 0xF7));
+        p.setPen(QColor(0xAA, 0xAA, 0xAA));
+        p.drawLine(0, rulerH_ - 1, viewport()->width(), rulerH_ - 1);
+        const qreal unit = 37.8 * Z;                  // 1cm @96dpi
+        for (int cm = 0; cm * unit < viewport()->width(); ++cm) {
+            int x = int(pgX + cm * unit);
+            p.drawLine(x, rulerH_ - 6, x, rulerH_ - 1);
+            if (cm) p.drawText(QRect(x - 14, 0, 28, rulerH_ - 6), Qt::AlignCenter,
+                               QString::number(cm));
+        }
+    }
+
+    // ---- 页背景：A4 白页 + 阴影 + 边距虚线 + 页码（分页视图）----
+    const int nPages = pageCount();
+    for (int i = 0; i < nPages + 1; ++i) {
+        qreal py = rulerH_ + 12.0 + i * (pgH + pgGap) - scrollY;
+        if (py > viewport()->height() || py + pgH + pgGap < 0) continue;
+        p.fillRect(QRectF(pgX + 3, py + 3, pgW, pgH).toRect(), QColor(0, 0, 0, 50));
+        p.fillRect(QRectF(pgX, py, pgW, pgH), Qt::white);
+        p.setPen(QPen(QColor(0xD5, 0xD8, 0xDD), 1));
+        p.drawRect(QRectF(pgX, py, pgW, pgH));
+        // 边距虚线
+        p.setPen(QPen(QColor(0xE3, 0xE6, 0xEA), 1, Qt::DashLine));
+        p.drawRect(QRectF(pgX + marginLeft_ * Z, py + marginTop_ * Z,
+                          pgW - (marginLeft_ + marginRight_) * Z,
+                          pgH - (marginTop_ + marginBottom_) * Z));
+        // 页码（页脚区中央）
+        p.setPen(QColor(0x88, 0x8A, 0x90));
+        p.drawText(QRectF(pgX, py + pgH - marginBottom_ * Z, pgW, 18).toRect(),
+                   Qt::AlignHCenter, tr("第 %1 页").arg(i + 1));
+    }
 
     if (!doc_ || !ed_) {
         p.setPen(QColor(0x90, 0x90, 0x90));
@@ -350,7 +427,7 @@ void PageView::paintEvent(QPaintEvent*) {
         return;
     }
 
-    const int scrollY = verticalScrollBar()->value();
+    // scrollY 已在页背景段声明
     const int W = viewport()->width();
 
     // ---- 表格（先画底：网格 + 表头底色，文本由段落盒层叠其上）----
@@ -453,6 +530,16 @@ void PageView::paintEvent(QPaintEvent*) {
             break;
         }
     }
+}
+
+void PageView::wheelEvent(QWheelEvent* e) {
+    if (e->modifiers() & Qt::ControlModifier) {
+        const int d = e->angleDelta().y();
+        setZoom(zoom_ + (d > 0 ? 0.1 : -0.1));
+        e->accept();
+        return;
+    }
+    QAbstractScrollArea::wheelEvent(e);
 }
 
 void PageView::timerEvent(QTimerEvent* e) {
