@@ -20,6 +20,10 @@ void ImageCache::setSource(const std::string& docxPath, const Document* doc) {
         std::fprintf(stderr, "ImageCache: open zip failed: %s\n", err.c_str());
 }
 
+void ImageCache::addMemoryMedia(const std::string& relId, std::vector<uint8_t> bytes) {
+    memoryMedia_[relId] = std::move(bytes);
+}
+
 std::string ImageCache::makeKey(const std::string& relId, uint32_t w, uint32_t h) {
     return relId + "#" + std::to_string(w) + "x" + std::to_string(h);
 }
@@ -51,17 +55,19 @@ const DecodedImage* ImageCache::get(const std::string& relId, uint32_t targetW, 
     }
     ++st_.misses;
 
-    // 读取媒体字节：长驻句柄（无重开 IO 放大）
-    if (!zipOk_) { ++st_.decodeErrors; return nullptr; }
-    const ZipEntry* ze = zip_.find(me->zipPath);
-    if (!ze) { ++st_.decodeErrors; return nullptr; }
+    // 读取媒体字节：内存媒体（新插入）优先，其次长驻句柄
     std::vector<uint8_t> file;
     auto t0 = std::chrono::steady_clock::now();
-    std::string rerr;
-    if (!zip_.read(*ze, file, 512ull * 1024 * 1024, &rerr)) {
-        ++st_.decodeErrors;
-        return nullptr;
+    auto memIt = memoryMedia_.find(relId);
+    bool have = false;
+    if (memIt != memoryMedia_.end()) {
+        file = memIt->second;
+        have = true;
+    } else if (zipOk_) {
+        const ZipEntry* ze = zip_.find(me->zipPath);
+        if (ze && zip_.read(*ze, file, 512ull * 1024 * 1024)) have = true;
     }
+    if (!have) { ++st_.decodeErrors; return nullptr; }
     auto t1 = std::chrono::steady_clock::now();
 
     DecodedImage img;
