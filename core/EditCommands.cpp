@@ -82,6 +82,7 @@ bool DocumentEditor::insertText(DocPos pos, const std::string& utf8) {
             "insert",
             [this, para] { if (Paragraph* pp = paragraphAt(para)) pp->runs.clear(); },
             [this, para, r] { if (Paragraph* pp = paragraphAt(para)) pp->runs = {r}; }));
+    afterEdit();
         return true;
     }
     if (pos.run >= p->runs.size()) return false;
@@ -102,6 +103,7 @@ bool DocumentEditor::insertText(DocPos pos, const std::string& utf8) {
                 t.insert(off, text);
             }
         }));
+    afterEdit();
     return true;
 }
 
@@ -157,6 +159,7 @@ bool DocumentEditor::deleteRange(DocPos from, DocPos to) {
                                  snapshot.begin(), snapshot.end());
             };
             stack_.execute(CommandStack::makeCmd("delete-para", undoFn, redoFn));
+            afterEdit();
             return true;
         }
         // cell 内跨段（M2.6）：整 cell 段落快照
@@ -187,6 +190,7 @@ bool DocumentEditor::deleteRange(DocPos from, DocPos to) {
                 if (ci < row.cells.size()) { row.cells[ci].paragraphs = snapshot; return; }
         };
         stack_.execute(CommandStack::makeCmd("delete-cell-para", undoFn, redoFn));
+        afterEdit();
         return true;
     }
 
@@ -212,6 +216,7 @@ bool DocumentEditor::deleteRange(DocPos from, DocPos to) {
         "delete",
         [this, para, oldRuns] { if (Paragraph* pp = paragraphAt(para)) pp->runs = oldRuns; },
         [this, para, newRuns] { if (Paragraph* pp = paragraphAt(para)) pp->runs = newRuns; }));
+    afterEdit();
     return true;
 }
 
@@ -262,6 +267,7 @@ bool DocumentEditor::splitParagraph(DocPos pos) {
             (void)para;
         };
         stack_.execute(CommandStack::makeCmd("split", doMerge, doSplit));
+        afterEdit();
         return true;
     }
     // cell 段落：cell 内追加
@@ -289,6 +295,7 @@ bool DocumentEditor::splitParagraph(DocPos pos) {
         }
     };
     stack_.execute(CommandStack::makeCmd("split-cell", doMergeCell, doSplitCell));
+    afterEdit();
     return true;
 }
 
@@ -406,6 +413,7 @@ bool DocumentEditor::formatRange(DocPos from, DocPos to,
         name,
         [this, para, oldRuns] { if (Paragraph* pp = paragraphAt(para)) pp->runs = oldRuns; },
         [this, para, newRuns] { if (Paragraph* pp = paragraphAt(para)) pp->runs = newRuns; }));
+    afterEdit();
     return true;
 }
 
@@ -418,6 +426,7 @@ bool DocumentEditor::setParaStyle(size_t flatPara, const std::string& styleId) {
         "parastyle",
         [this, para, old] { if (Paragraph* pp = paragraphAt(para)) pp->styleId = old; },
         [this, para, styleId] { if (Paragraph* pp = paragraphAt(para)) pp->styleId = styleId; }));
+    afterEdit();
     return true;
 }
 
@@ -492,6 +501,7 @@ bool DocumentEditor::insertImage(size_t flatPara, const std::string& relId,
         "insert-image",
         [this, para, oldImgs] { if (Paragraph* q = paragraphAt(para)) q->images = oldImgs; },
         [this, para, newImgs] { if (Paragraph* q = paragraphAt(para)) q->images = newImgs; }));
+    afterEdit();
     return true;
 }
 
@@ -521,6 +531,7 @@ bool DocumentEditor::insertTableAfter(size_t flatPara, uint32_t rows, uint32_t c
         [this, bodyIdx, newTable]() mutable {
             doc_.body.insert(doc_.body.begin() + (long)bodyIdx + 1, newTable);
         }));
+    afterEdit();
     return true;
 }
 
@@ -533,6 +544,7 @@ bool DocumentEditor::setPageBreakBefore(size_t flatPara, bool val) {
         "pagebreak",
         [this, para, old] { if (Paragraph* p = paragraphAt(para)) p->pageBreakBefore = old; },
         [this, para, val] { if (Paragraph* p = paragraphAt(para)) p->pageBreakBefore = val; }));
+    afterEdit();
     return true;
 }
 
@@ -547,6 +559,7 @@ bool DocumentEditor::removeImage(size_t flatPara, size_t imageIdx) {
         "remove-image",
         [this, para, oldImgs] { if (Paragraph* p = paragraphAt(para)) p->images = oldImgs; },
         [this, para, newImgs] { if (Paragraph* p = paragraphAt(para)) p->images = newImgs; }));
+    afterEdit();
     return true;
 }
 
@@ -590,6 +603,7 @@ bool DocumentEditor::tableInsertRowAfter(size_t flatPara) {
         "table-row+",
         [this, idx, oldT] { doc_.body[idx].table = oldT; },
         [this, idx, newT] { doc_.body[idx].table = newT; }));
+    afterEdit();
     return true;
 }
 
@@ -605,6 +619,7 @@ bool DocumentEditor::tableDeleteRow(size_t flatPara) {
         "table-row-",
         [this, idx, oldT] { doc_.body[idx].table = oldT; },
         [this, idx, newT] { doc_.body[idx].table = newT; }));
+    afterEdit();
     return true;
 }
 
@@ -625,6 +640,7 @@ bool DocumentEditor::tableInsertColRight(size_t flatPara) {
         "table-col+",
         [this, idx, oldT] { doc_.body[idx].table = oldT; },
         [this, idx, newT] { doc_.body[idx].table = newT; }));
+    afterEdit();
     return true;
 }
 
@@ -644,6 +660,7 @@ bool DocumentEditor::tableDeleteCol(size_t flatPara) {
         "table-col-",
         [this, idx, oldT] { doc_.body[idx].table = oldT; },
         [this, idx, newT] { doc_.body[idx].table = newT; }));
+    afterEdit();
     return true;
 }
 
@@ -658,6 +675,7 @@ bool DocumentEditor::insertParagraphsAtStart(const std::vector<Paragraph>& paras
         [this, cnt] { doc_.body.erase(doc_.body.begin(), doc_.body.begin() + (long)cnt); },
         [this, newNodes]() mutable {
             doc_.body.insert(doc_.body.begin(), newNodes.begin(), newNodes.end());
+    afterEdit();
         }));
     return true;
 }
@@ -680,6 +698,7 @@ bool DocumentEditor::setIndent(size_t flatPara, uint32_t left, uint32_t right, i
                 p->indLeftTw = left; p->indRightTw = right; p->indFirstLineTw = firstLine;
             }
         }));
+    afterEdit();
     return true;
 }
 
@@ -692,6 +711,7 @@ bool DocumentEditor::setLineSpacing(size_t flatPara, uint32_t line240) {
         "linespacing",
         [this, para, old] { if (Paragraph* p = paragraphAt(para)) p->lineSpacing = old; },
         [this, para, line240] { if (Paragraph* p = paragraphAt(para)) p->lineSpacing = line240; }));
+    afterEdit();
     return true;
 }
 
@@ -701,6 +721,7 @@ void DocumentEditor::replaceRunsCommand(size_t flatPara, RunList oldRuns, RunLis
         name,
         [this, flatPara, oldRuns] { if (Paragraph* pp = paragraphAt(flatPara)) pp->runs = oldRuns; },
         [this, flatPara, newRuns] { if (Paragraph* pp = paragraphAt(flatPara)) pp->runs = newRuns; }));
+    afterEdit();
 }
 
 bool DocumentEditor::setAlign(size_t flatPara, Align a) {
@@ -712,6 +733,7 @@ bool DocumentEditor::setAlign(size_t flatPara, Align a) {
         "align",
         [this, para, old] { if (Paragraph* pp = paragraphAt(para)) pp->align = old; },
         [this, para, a] { if (Paragraph* pp = paragraphAt(para)) pp->align = a; }));
+    afterEdit();
     return true;
 }
 
@@ -810,6 +832,7 @@ bool DocumentEditor::paste(DocPos pos, const ClipboardFragment& frag) {
             "paste",
             [this, para, oldRuns] { if (Paragraph* pp = paragraphAt(para)) pp->runs = oldRuns; },
             [this, para, newRuns] { if (Paragraph* pp = paragraphAt(para)) pp->runs = newRuns; }));
+    afterEdit();
         return true;
     }
 
@@ -865,6 +888,7 @@ bool DocumentEditor::paste(DocPos pos, const ClipboardFragment& frag) {
                          snapshot.begin(), snapshot.end());
     };
     stack_.execute(CommandStack::makeCmd("paste-multi", undoFn, redoFn));
+    afterEdit();
     return true;
 }
 
@@ -875,6 +899,20 @@ void DocumentEditor::replaceRunsCommand2(size_t flatPara, std::vector<ImageRun> 
         "img-resize",
         [this, flatPara, oldImgs] { if (Paragraph* p = paragraphAt(flatPara)) p->images = oldImgs; },
         [this, flatPara, newImgs] { if (Paragraph* p = paragraphAt(flatPara)) p->images = newImgs; }));
+    afterEdit();
+}
+
+
+bool DocumentEditor::undo() {
+    if (!stack_.undo()) return false;
+    doc_.recountStats();
+    return true;
+}
+
+bool DocumentEditor::redo() {
+    if (!stack_.redo()) return false;
+    doc_.recountStats();
+    return true;
 }
 
 } // namespace oc
