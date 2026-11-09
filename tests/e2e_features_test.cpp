@@ -33,6 +33,7 @@ static int g_pass = 0, g_fail = 0;
     else { ++g_fail; printf("  ❌ %s (line %d)\n", msg, __LINE__); } } while (0)
 
 static std::string g_srcPath;
+static size_t ccd_before(Document& d) { return d.body.size(); }
 static bool mediaFromSrc(const std::string&, const std::string& zp, std::vector<uint8_t>& o) {
     return DocxReader::readMedia(g_srcPath, zp, o);
 }
@@ -195,6 +196,44 @@ int main(int argc, char** argv) {
         }
         // 媒体保真
         CHECK(doc2.mediaIndex.size() == doc.mediaIndex.size(), "媒体条目保真");
+    }
+
+    printf("═══════ Phase 4.5：批次C 插入能力 ═══════\n");
+    {
+        Document cdoc;
+        CHECK(DocxReader::read(dataDir + "/mini_bid.docx", cdoc).ok, "C:读取");
+        CommandStack ccs;
+        DocumentEditor ced(cdoc, ccs);
+        // 插入表格 3x4 到段0后
+        size_t body0 = ccd_before(cdoc);
+        CHECK(ced.insertTableAfter(0, 3, 4), "C:插入表格");
+        CHECK(cdoc.body.size() == body0 + 1, "C:表格节点+1");
+        auto* tblNode = &cdoc.body[1];
+        CHECK(tblNode->kind == Node::Kind::Table &&
+              tblNode->table.rows.size() == 3 && tblNode->table.rows[0].cells.size() == 4,
+              "C:表格结构3x4");
+        CHECK(ccs.undo() && cdoc.body.size() == body0, "C:表格撤销");
+        CHECK(ccs.redo() && cdoc.body.size() == body0 + 1, "C:表格重做");
+        // 插入图片（媒体条目+段落图片+撤销）
+        MediaEntry me; me.relId = "rIdNew1"; me.zipPath = "word/media/rIdNew1.png"; me.byteSize = 100;
+        cdoc.mediaIndex.push_back(me);
+        CHECK(ced.insertImage(0, "rIdNew1", 1905000, 1270000), "C:插入图片");
+        CHECK(ced.paragraphAt(0)->images.size() == 1, "C:段落图片+1");
+        CHECK(ccs.undo() && ced.paragraphAt(0)->images.empty(), "C:图片撤销");
+        // 保存 round-trip（新媒体经 provider）
+        g_srcPath = dataDir + "/mini_bid.docx";
+        static std::map<std::string, std::vector<uint8_t>> mem = {{"rIdNew1", {0x89,0x50,0x4E,0x47}}};
+        struct P { static bool prov(const std::string& id, const std::string&, std::vector<uint8_t>& o) {
+            auto it = mem.find(id);
+            if (it != mem.end()) { o = it->second; return true; }
+            return false;
+        }};
+        auto r = DocxWriter::write(dataDir + "/c_insert.docx", cdoc, &P::prov, nullptr);
+        CHECK(r.ok, "C:保存(含内存媒体)");
+        Document back;
+        CHECK(DocxReader::read(dataDir + "/c_insert.docx", back).ok &&
+              back.stats.tables == 2 && back.mediaIndex.size() == 3,
+              "C:round-trip(表格+媒体)");
     }
 
     printf("═══════ Phase 5：性能基线 ═══════\n");
