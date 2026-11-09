@@ -82,6 +82,7 @@ struct DocumentStats {
     uint32_t paragraphs = 0, tables = 0, images = 0;
     uint64_t mediaBytes = 0;
     uint32_t textChars = 0;    // UTF-8 字节近似
+    uint32_t unicodeChars = 0; // Unicode 字符数（状态栏字数统计用，接近 Word 口径）
 };
 
 class Document {
@@ -94,6 +95,7 @@ public:
 
     // 序列化摘要（调试/测试/状态栏）
     std::string summary() const;
+    void recountStats();          // 编辑后重算（字数/段落/表格/图片）
 };
 
 } // namespace oc
