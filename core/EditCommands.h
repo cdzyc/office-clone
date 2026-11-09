@@ -68,6 +68,19 @@ public:
                      uint32_t cxEmu, uint32_t cyEmu);
     // 在指定段之后插入 rows×cols 空表格（列宽均分 A4 正文宽）
     bool insertTableAfter(size_t flatPara, uint32_t rows, uint32_t cols);
+    // 批次G：分页符（段前分页）与图片删除
+    bool setPageBreakBefore(size_t flatPara, bool val);
+    bool removeImage(size_t flatPara, size_t imageIdx);
+    // 批次G：表格行列操作（作用于光标所在表；body 级快照撤销）
+    bool tableInsertRowAfter(size_t flatPara);
+    bool tableDeleteRow(size_t flatPara);
+    bool tableInsertColRight(size_t flatPara);
+    bool tableDeleteCol(size_t flatPara);
+    // 批次G：在文档开头插入多个段落（目录生成）
+    bool insertParagraphsAtStart(const std::vector<Paragraph>& paras);
+    // 图片列表整体替换（UI 拖拽缩放用）
+    void replaceRunsCommand2(size_t flatPara, std::vector<ImageRun> oldImgs,
+                             std::vector<ImageRun> newImgs);
 
     // ---- 剪贴板（M2.6）----
     // 复制 [from, to) 为富文本片段（跨段支持，保留 run 格式与段落结构）
