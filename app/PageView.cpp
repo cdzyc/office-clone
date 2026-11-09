@@ -1045,6 +1045,15 @@ int PageView::replaceAll(const QString& from, const QString& to) {
     return count;
 }
 
+void PageView::pasteTextAtCursor(const QString& text) {
+    if (!ed_ || text.isEmpty()) return;
+    ed_->insertText(cursor_, text.toUtf8().toStdString());
+    cursor_.off += text.toUtf8().size();
+    anchor_ = cursor_;
+    relayoutAndKeepCursor();
+    emit edited();
+}
+
 void PageView::pasteText(const QString& text) {
     if (!ed_ || text.isEmpty()) return;
     const bool hasSel = !(anchor_ == cursor_);
