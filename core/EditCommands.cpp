@@ -478,6 +478,52 @@ int DocumentEditor::replaceAll(const std::string& from, const std::string& to) {
     return count;
 }
 
+bool DocumentEditor::insertImage(size_t flatPara, const std::string& relId,
+                                 uint32_t cxEmu, uint32_t cyEmu) {
+    ParaLoc loc = locate(flatPara);
+    if (!loc.p) return false;
+    Paragraph* p = loc.p;
+    // 快照图片列表
+    std::vector<ImageRun> oldImgs = p->images;
+    p->images.push_back(ImageRun{relId, cxEmu, cyEmu});
+    std::vector<ImageRun> newImgs = p->images;
+    size_t para = flatPara;
+    stack_.execute(CommandStack::makeCmd(
+        "insert-image",
+        [this, para, oldImgs] { if (Paragraph* q = paragraphAt(para)) q->images = oldImgs; },
+        [this, para, newImgs] { if (Paragraph* q = paragraphAt(para)) q->images = newImgs; }));
+    return true;
+}
+
+bool DocumentEditor::insertTableAfter(size_t flatPara, uint32_t rows, uint32_t cols) {
+    ParaLoc loc = locate(flatPara);
+    if (!loc.node || rows == 0 || cols == 0 || rows > 200 || cols > 50) return false;
+    if (loc.cellIdx != kNoCell) return false;          // 表格内不嵌套（M4）
+    // 构造表格：A4 正文宽 9638 twips 均分
+    Table t;
+    t.colWidthsDxa.assign(cols, 9638 / cols);
+    for (uint32_t r = 0; r < rows; ++r) {
+        TableRow row;
+        for (uint32_t c = 0; c < cols; ++c) {
+            TableCell cell;
+            cell.paragraphs.emplace_back();
+            row.cells.push_back(std::move(cell));
+        }
+        t.rows.push_back(std::move(row));
+    }
+    Node newTable{Node::Kind::Table, Paragraph{}, std::move(t)};
+    size_t bodyIdx = loc.bodyIdx;
+    stack_.execute(CommandStack::makeCmd(
+        "insert-table",
+        [this, bodyIdx] {
+            doc_.body.erase(doc_.body.begin() + (long)bodyIdx + 1);
+        },
+        [this, bodyIdx, newTable]() mutable {
+            doc_.body.insert(doc_.body.begin() + (long)bodyIdx + 1, newTable);
+        }));
+    return true;
+}
+
 bool DocumentEditor::setIndent(size_t flatPara, uint32_t left, uint32_t right, int firstLine) {
     ParaLoc loc = locate(flatPara);
     if (!loc.p) return false;
