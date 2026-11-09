@@ -119,6 +119,11 @@ public:
     bool brushActive() const { return brushActive_; }
     // 查找全部高亮（字符级黄底；空串清除）
     void highlightAllMatches(const QString& needle);
+    // 批次E：缩放（Ctrl+滚轮；0.5~4.0）与页视图数据
+    double zoom() const { return zoom_; }
+    void setZoom(double z);                    // 程序设置（菜单）
+    int pageCount() const { return (int)pageBreaks_.size() + 1; }
+    qreal pageVisualHeight() const;            // 单页视觉高（含边距×zoom）
     size_t cursorPara() const { return cursor_.para; }
     void refreshAfterEdit() { relayoutAndKeepCursor(); }
     void pasteTextAtCursor(const QString& text);
@@ -155,6 +160,16 @@ private:
     // 查找高亮命中（段落字符区间）
     struct Match { size_t flat; int start, len; };
     std::vector<Match> matches_;
+    // 批次E：缩放与分页视图
+    double zoom_ = 1.0;                        // 0.5~4.0
+    std::vector<qreal> pageBreaks_;            // 每页内容起点 y（页0 从 topPad 起）
+    qreal pageW_ = 794, pageH_ = 1123;         // A4 px@96（按文档 sectPr）
+    qreal marginTop_ = 96, marginBottom_ = 96, marginLeft_ = 120, marginRight_ = 120;
+    int rulerH_ = 22;                          // 水平标尺高
+protected:
+    void wheelEvent(QWheelEvent*) override;
+signals:
+    void zoomChanged(double z);
 };
 
 } // namespace oc::qt
