@@ -123,6 +123,7 @@ public:
     double zoom() const { return zoom_; }
     void setZoom(double z);                    // 程序设置（菜单）
     int pageCount() const { return (int)pageBreaks_.size() + 1; }
+    int pageOfFlat(size_t flat) const;                  // 段落→页号（目录用）
     qreal pageVisualHeight() const;            // 单页视觉高（含边距×zoom）
     size_t cursorPara() const { return cursor_.para; }
     void refreshAfterEdit() { relayoutAndKeepCursor(); }
@@ -160,6 +161,10 @@ private:
     // 查找高亮命中（段落字符区间）
     struct Match { size_t flat; int start, len; };
     std::vector<Match> matches_;
+    // 批次G：图片选择/拖拽
+    size_t imgSelPara_ = (size_t)-1;
+    bool imgDragging_ = false;
+    QPointF imgDragStart_;
     // 批次E：缩放与分页视图
     double zoom_ = 1.0;                        // 0.5~4.0
     std::vector<qreal> pageBreaks_;            // 每页内容起点 y（页0 从 topPad 起）
