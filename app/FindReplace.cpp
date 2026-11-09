@@ -20,6 +20,10 @@ FindReplaceDialog::FindReplaceDialog(PageView* view, QWidget* parent)
     replaceEdit_ = new QLineEdit(this);
     replaceEdit_->setPlaceholderText(tr("替换为…"));
 
+    auto* btnHl = new QPushButton(tr("全部高亮"), this);
+    connect(btnHl, &QPushButton::clicked, this, [this]() {
+        view_->highlightAllMatches(findEdit_->text());
+    });
     auto* btnFind = new QPushButton(tr("查找下一个"), this);
     connect(btnFind, &QPushButton::clicked, this, &FindReplaceDialog::onFindNext);
     auto* btnRep = new QPushButton(tr("替换"), this);
@@ -31,6 +35,7 @@ FindReplaceDialog::FindReplaceDialog(PageView* view, QWidget* parent)
     row1->addWidget(new QLabel(tr("查找:"), this));
     row1->addWidget(findEdit_, 1);
     row1->addWidget(btnFind);
+    row1->addWidget(btnHl);
 
     auto* row2 = new QHBoxLayout;
     row2->addWidget(new QLabel(tr("替换:"), this));
