@@ -551,7 +551,7 @@ bool DocumentEditor::removeImage(size_t flatPara, size_t imageIdx) {
 }
 
 // ---- 表格行列操作（body 快照撤销；定位光标段所在表格）----
-static bool locateTable(Document& doc, DocumentEditor& ed, size_t flatPara,
+static bool locateTable(Document& doc, size_t flatPara,
                         size_t* bodyIdx, size_t* rowIdx) {
     // 借助 editor 的扁平视图：重新遍历定位
     size_t n = 0;
@@ -578,7 +578,7 @@ static bool locateTable(Document& doc, DocumentEditor& ed, size_t flatPara,
 
 bool DocumentEditor::tableInsertRowAfter(size_t flatPara) {
     size_t bi, ri;
-    if (!locateTable(doc_, *this, flatPara, &bi, &ri)) return false;
+    if (!locateTable(doc_, flatPara, &bi, &ri)) return false;
     Table oldT = doc_.body[bi].table;
     Table newT = oldT;
     if (ri + 1 >= newT.rows.size())
@@ -595,7 +595,7 @@ bool DocumentEditor::tableInsertRowAfter(size_t flatPara) {
 
 bool DocumentEditor::tableDeleteRow(size_t flatPara) {
     size_t bi, ri;
-    if (!locateTable(doc_, *this, flatPara, &bi, &ri)) return false;
+    if (!locateTable(doc_, flatPara, &bi, &ri)) return false;
     if (doc_.body[bi].table.rows.size() <= 1) return false;   // 至少留一行
     Table oldT = doc_.body[bi].table;
     Table newT = oldT;
@@ -610,7 +610,7 @@ bool DocumentEditor::tableDeleteRow(size_t flatPara) {
 
 bool DocumentEditor::tableInsertColRight(size_t flatPara) {
     size_t bi, ri;
-    if (!locateTable(doc_, *this, flatPara, &bi, &ri)) return false;
+    if (!locateTable(doc_, flatPara, &bi, &ri)) return false;
     Table oldT = doc_.body[bi].table;
     Table newT = oldT;
     for (auto& row : newT.rows) {
@@ -630,7 +630,7 @@ bool DocumentEditor::tableInsertColRight(size_t flatPara) {
 
 bool DocumentEditor::tableDeleteCol(size_t flatPara) {
     size_t bi, ri;
-    if (!locateTable(doc_, *this, flatPara, &bi, &ri)) return false;
+    if (!locateTable(doc_, flatPara, &bi, &ri)) return false;
     Table oldT = doc_.body[bi].table;
     size_t cols = 0;
     for (const auto& r : oldT.rows) cols = std::max(cols, r.cells.size());
