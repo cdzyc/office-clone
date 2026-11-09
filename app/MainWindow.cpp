@@ -13,6 +13,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QFileDialog>
+#include <QInputDialog>
 #include <QFileInfo>
 #include <QFontComboBox>
 #include <QIcon>
@@ -91,6 +92,8 @@ MainWindow::MainWindow() {
 
     status_ = new QLabel(tr("就绪"), this);
     statusBar()->addWidget(status_, 1);
+    wordCount_ = new QLabel(tr("字数：0"), this);
+    statusBar()->addPermanentWidget(wordCount_);
 
     findDlg_ = new FindReplaceDialog(view_, this);
     autosaveTimer_ = new QTimer(this);
@@ -168,6 +171,14 @@ void MainWindow::buildMenu() {
     addEdit(tr("粘贴(&P)"), QKeySequence::Paste, "paste");
     addEdit(tr("全选(&A)"), QKeySequence::SelectAll, "selectall");
     edit->addSeparator();
+    QAction* gotoAct = edit->addAction(tr("定位(&G)..."));
+    gotoAct->setShortcut(tr("Ctrl+G"));
+    connect(gotoAct, &QAction::triggered, this, [this]() {
+        bool ok = false;
+        int n = QInputDialog::getInt(this, tr("定位到段落"), tr("段落号（1 起）："),
+                                     1, 1, 1000000, 1, &ok);
+        if (ok) view_->scrollToPara((size_t)(n - 1));
+    });
     QMenu* ins = menuBar()->addMenu(tr("插入(&I)"));
     QAction* insImg = ins->addAction(tr("图片(&P)..."));
     connect(insImg, &QAction::triggered, this, [this]() { onInsertImage(); });
@@ -297,6 +308,15 @@ void MainWindow::buildToolbar() {
     connFormat(italicBtn_, [this](bool v) { view_->italicSelection(v); });
     connFormat(underlineBtn_, [this](bool v) { view_->underlineSelection(v); });
     connFormat(strikeBtn_, [this](bool v) { view_->strikeSelection(v); });
+    auto* brushBtn = new QToolButton(this);
+    brushBtn->setText(tr("🖌"));
+    brushBtn->setToolTip(tr("格式刷：光标放到源格式处→点此→点击目标段落"));
+    brushBtn->setAutoRaise(true);
+    tb->addWidget(brushBtn);
+    connect(brushBtn, &QToolButton::clicked, this, [brushBtn, this]() {
+        view_->startFormatBrush();
+        brushBtn->setChecked(view_->brushActive());
+    });
 
     // 文字颜色（标准色板）
     colorCombo_ = new QComboBox(this);
@@ -570,6 +590,13 @@ void MainWindow::rebuildOutline() {
 void MainWindow::onEdited() {
     dirty_ = true;
     autosaveTimer_->start();                          // 静默 30s 后自动保存
+    if (doc_) {
+        const_cast<oc::Document&>(*doc_).recountStats();
+        wordCount_->setText(tr("字数：%1 ｜ 段：%2 ｜ 表：%3")
+                                .arg(doc_->stats.unicodeChars)
+                                .arg(doc_->stats.paragraphs)
+                                .arg(doc_->stats.tables));
+    }
     if (!openPath_.isEmpty())
         setWindowTitle(tr("%1* — Office Clone").arg(QFileInfo(openPath_).fileName()));
     status_->setText(tr("已修改（Ctrl+S 保存）｜ %1")
