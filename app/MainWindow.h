@@ -57,6 +57,7 @@ private:
     LogPanel* logPanel_ = nullptr;            // 右下角日志框
     QLabel* infoCard_ = nullptr;              // 右上：文档速览
     QLabel* status_ = nullptr;
+    QLabel* wordCount_ = nullptr;   // 状态栏字数（批次D）
 
     // 工具栏控件
     QComboBox* styleCombo_ = nullptr;
