@@ -114,6 +114,11 @@ private:
     // 大纲导航/插入辅助
 public:
     void scrollToPara(size_t flat);
+    // 批次D：格式刷（复制当前光标格式→点击目标段应用）
+    void startFormatBrush();
+    bool brushActive() const { return brushActive_; }
+    // 查找全部高亮（字符级黄底；空串清除）
+    void highlightAllMatches(const QString& needle);
     size_t cursorPara() const { return cursor_.para; }
     void refreshAfterEdit() { relayoutAndKeepCursor(); }
     void pasteTextAtCursor(const QString& text);
@@ -121,6 +126,9 @@ public:
     bool findNext(const QString& needle);
     int replaceAll(const QString& from, const QString& to);   // 返回替换次数
     void pasteText(const QString& text);                      // 替换当前选中后插入
+
+signals:
+    void statsChanged();
 private:
     std::vector<ParaBox> boxes_;
     std::vector<TableBox> tables_;
@@ -141,6 +149,12 @@ private:
     oc::ImageCache* cache_ = nullptr;   // 图片缓存（MainWindow 持有）
     DocPos charToDocPos(size_t flat, int charIdx) const;  // 字符下标→run/字节偏移
     QString numberedPrefixOf(size_t flat) const;          // 编号列表当前序号前缀
+    // 格式刷
+    bool brushActive_ = false;
+    oc::TextRun brushFmt_;
+    // 查找高亮命中（段落字符区间）
+    struct Match { size_t flat; int start, len; };
+    std::vector<Match> matches_;
 };
 
 } // namespace oc::qt
