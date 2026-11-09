@@ -35,17 +35,6 @@ enable_testing()
 # 测试夹具自动生成（修复 #4：ctest 前自动跑 make_fixtures.py，无需手动）
 find_package(Python3 COMPONENTS Interpreter QUIET)
 if (Python3_FOUND)
-    add_custom_command(
-        OUTPUT  ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/mini_bid.docx
-        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/make_fixtures.py
-        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
-        COMMENT "Generating test fixtures"
-        VERBATIM)
-    add_custom_target(oc_fixtures DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/mini_bid.docx)
-    add_dependencies(core_tests oc_fixtures)
-    add_dependencies(m2_tests oc_fixtures)
-    add_dependencies(m3_tests oc_fixtures)
-    add_dependencies(e2e_tests oc_fixtures)
 endif()
 
 add_executable(core_tests tests/core_tests.cpp)
@@ -70,6 +59,20 @@ add_test(NAME e2e_tests
 
 add_executable(perf_suite tests/perf_suite.cpp)
 target_link_libraries(perf_suite PRIVATE oc_core)
+
+if (Python3_FOUND)
+    add_custom_command(
+        OUTPUT  ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/mini_bid.docx
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/make_fixtures.py
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Generating test fixtures"
+        VERBATIM)
+    add_custom_target(oc_fixtures DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/mini_bid.docx)
+    add_dependencies(core_tests oc_fixtures)
+    add_dependencies(m2_tests oc_fixtures)
+    add_dependencies(m3_tests oc_fixtures)
+    add_dependencies(e2e_tests oc_fixtures)
+endif()
 
 find_package(Python3 COMPONENTS Interpreter)
 
