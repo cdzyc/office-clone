@@ -111,9 +111,12 @@ private:
     DocPos endOfPara(size_t flat) const;
     void relayoutAndKeepCursor();
     QString paraText(size_t flat) const;
-    // 大纲导航：滚动到指定段
+    // 大纲导航/插入辅助
 public:
     void scrollToPara(size_t flat);
+    size_t cursorPara() const { return cursor_.para; }
+    void refreshAfterEdit() { relayoutAndKeepCursor(); }
+    void pasteTextAtCursor(const QString& text);
     // 查找替换（大小写不敏感；findNext 命中跳转并选中）
     bool findNext(const QString& needle);
     int replaceAll(const QString& from, const QString& to);   // 返回替换次数
