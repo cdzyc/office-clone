@@ -5,7 +5,7 @@
 
 ## 获取可运行的 exe（三条路，按省事排序）
 
-- **⭐ 直接下载**：会话产物区 `office-clone-windows-x64.zip`（19MB，解压双击即用，无需安装任何东西）
+- **⭐ 直接下载**：会话产物区 `office-clone-windows-msvc.zip`（19MB，解压双击即用，无需安装任何东西）
   —— 由 Linux 沙箱交叉编译（MinGW 13 + Qt 6.8.1 win64）产出
 - **免装环境云编译**：上传 GitHub → Actions 自动出包（[CI_PACKAGING.md](CI_PACKAGING.md)）
 - **本地编译**：VS2022 + Qt 6（[BUILD_WINDOWS.md](BUILD_WINDOWS.md)）
