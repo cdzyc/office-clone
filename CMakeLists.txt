@@ -47,6 +47,11 @@ target_link_libraries(m3_tests PRIVATE oc_core)
 add_test(NAME m3_tests
          COMMAND m3_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/data)
 
+add_executable(e2e_tests tests/e2e_features_test.cpp)
+target_link_libraries(e2e_tests PRIVATE oc_core)
+add_test(NAME e2e_tests
+         COMMAND e2e_tests ${CMAKE_CURRENT_SOURCE_DIR}/tests/data)
+
 add_executable(perf_suite tests/perf_suite.cpp)
 target_link_libraries(perf_suite PRIVATE oc_core)
 
