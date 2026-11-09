@@ -2,6 +2,7 @@
 #include "FindReplace.h"
 #include "LogPanel.h"
 #include "PageView.h"
+#include "PdfExporter.h"
 #include "../core/CommandStack.h"
 #include "../core/DocxReader.h"
 #include "../core/DocxWriter.h"
@@ -13,6 +14,7 @@
 #include <QApplication>
 #include <QComboBox>
 #include <QFileDialog>
+#include <QPrinter>
 #include <QInputDialog>
 #include <QFileInfo>
 #include <QFontComboBox>
@@ -128,6 +130,32 @@ void MainWindow::buildMenu() {
     connect(save, &QAction::triggered, this, &MainWindow::onSave);
     QAction* saveAs = file->addAction(tr("另存为(&A)..."));
     connect(saveAs, &QAction::triggered, this, &MainWindow::onSaveAs);
+    QAction* pdf = file->addAction(tr("导出 PDF(&E)..."));
+    pdf->setShortcut(tr("Ctrl+E"));
+    connect(pdf, &QAction::triggered, this, [this]() {
+        if (!doc_) return;
+        QString path = QFileDialog::getSaveFileName(this, tr("导出 PDF"),
+            QFileInfo(openPath_).absolutePath() + "/" +
+            QFileInfo(openPath_).completeBaseName() + ".pdf",
+            tr("PDF 文档 (*.pdf)"));
+        if (path.isEmpty()) return;
+        QString err;
+        logPanel_->log(QStringLiteral("INFO"), tr("正在导出 PDF：%1 …").arg(path));
+        auto t0 = std::chrono::steady_clock::now();
+        bool ok = PdfExporter::exportPdf(path, *doc_, imageCache_.get(), &err);
+        double sec = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        if (ok) logPanel_->log(QStringLiteral("INFO"),
+                    tr("PDF 导出成功：%1 ｜ 耗时 %2 s").arg(path).arg(sec, 0, 'f', 1));
+        else logPanel_->log(QStringLiteral("ERROR"), tr("PDF 导出失败：%1").arg(err));
+    });
+    QAction* prn = file->addAction(tr("打印(&P)..."));
+    prn->setShortcut(QKeySequence::Print);
+    connect(prn, &QAction::triggered, this, [this]() {
+        if (!doc_) return;
+        QString err;
+        if (!PdfExporter::printDialog(this, *doc_, imageCache_.get(), &err) && !err.isEmpty())
+            logPanel_->log(QStringLiteral("ERROR"), tr("打印失败：%1").arg(err));
+    });
     file->addSeparator();
     QAction* quit = file->addAction(tr("退出(&Q)"));
     quit->setShortcut(QKeySequence::Quit);
