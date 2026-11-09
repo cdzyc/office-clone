@@ -24,6 +24,8 @@ public:
 
     // 打开源文档：长驻 ZIP 句柄（索引模式）——取图无重开 IO 放大（P0 修复）
     void setSource(const std::string& docxPath, const Document* doc);
+    // 新插入图片的内存媒体（不经过 zip；保存时同样搬运）
+    void addMemoryMedia(const std::string& relId, std::vector<uint8_t> bytes);
     void setExternalDecoder(ExternalDecoder dec) { external_ = std::move(dec); }
 
     // 按需获取（解码+下采样+缓存；未命中/不支持返回 nullptr）
@@ -52,6 +54,7 @@ private:
     const Document* doc_ = nullptr;
     ZipReader zip_;                                       // 长驻句柄（索引模式）
     bool zipOk_ = false;
+    std::unordered_map<std::string, std::vector<uint8_t>> memoryMedia_;
     ExternalDecoder external_;
     Stats st_;
 };
