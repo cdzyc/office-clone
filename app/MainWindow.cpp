@@ -122,6 +122,21 @@ MainWindow::~MainWindow() = default;
 
 void MainWindow::buildMenu() {
     QMenu* file = menuBar()->addMenu(tr("文件(&F)"));
+    QAction* neew = file->addAction(tr("新建(&N)"));
+    neew->setShortcut(QKeySequence::New);
+    connect(neew, &QAction::triggered, this, [this]() {
+        if (dirty_) {
+            auto b = QMessageBox::question(this, tr("未保存的修改"),
+                                           tr("放弃当前修改并新建文档？"));
+            if (b != QMessageBox::Yes) return;
+        }
+        auto d = std::make_shared<oc::Document>();
+        d->page = oc::PageSetup{};                     // A4 默认
+        d->body.emplace_back(oc::Node{oc::Node::Kind::Paragraph, oc::Paragraph{}, oc::Table{}});
+        openPath_.clear();
+        onLoaded(d, 0, QString(), {});
+        logPanel_->log(QStringLiteral("INFO"), tr("新建空白文档（未保存，Ctrl+S 时选择位置）"));
+    });
     QAction* open = file->addAction(tr("打开(&O)..."));
     open->setShortcut(QKeySequence::Open);
     connect(open, &QAction::triggered, this, &MainWindow::onOpenDialog);
@@ -199,6 +214,11 @@ void MainWindow::buildMenu() {
     addEdit(tr("粘贴(&P)"), QKeySequence::Paste, "paste");
     addEdit(tr("全选(&A)"), QKeySequence::SelectAll, "selectall");
     edit->addSeparator();
+    QAction* pastePlain = edit->addAction(tr("选择性粘贴(&V)（仅文本）"));
+    pastePlain->setShortcut(tr("Ctrl+Shift+V"));
+    connect(pastePlain, &QAction::triggered, this, [this]() {
+        view_->pasteClipboard();                        // 剪贴板→纯文本路径（无格式）
+    });
     QAction* gotoAct = edit->addAction(tr("定位(&G)..."));
     gotoAct->setShortcut(tr("Ctrl+G"));
     connect(gotoAct, &QAction::triggered, this, [this]() {
@@ -212,14 +232,66 @@ void MainWindow::buildMenu() {
     connect(insImg, &QAction::triggered, this, [this]() { onInsertImage(); });
     QAction* insTbl = ins->addAction(tr("表格(&T)..."));
     connect(insTbl, &QAction::triggered, this, [this]() { onInsertTable(); });
+    QAction* insPB = ins->addAction(tr("分页符(&B)（本段前分页，点击切换）"));
+    connect(insPB, &QAction::triggered, this, [this]() {
+        if (!editor_) return;
+        const oc::Paragraph* p = editor_->paragraphAt(view_->cursorPara());
+        bool cur = p && p->pageBreakBefore;
+        editor_->setPageBreakBefore(view_->cursorPara(), !cur);
+        view_->refreshAfterEdit();
+    });
+    QAction* insTOC = ins->addAction(tr("目录(&C)（从标题生成）"));
+    connect(insTOC, &QAction::triggered, this, [this]() {
+        if (!doc_ || !editor_) return;
+        std::vector<oc::Paragraph> tocs;
+        oc::Paragraph title;
+        title.styleId = "Title"; title.align = oc::Align::Center;
+        oc::TextRun titleRun; titleRun.text = "目 录"; title.runs = {titleRun};
+        tocs.push_back(title);
+        const size_t n = editor_->paragraphCount();
+        for (size_t i = 0; i < n; ++i) {
+            const oc::Paragraph* p = editor_->paragraphAt(i);
+            if (!p || (p->styleId != "Heading1" && p->styleId != "Heading2" &&
+                       p->styleId != "Heading3" && p->styleId != "Title"))
+                continue;
+            if (p->styleId == "Title") continue;        // 文档标题不入目录
+            QString text;
+            for (const auto& r : p->runs) text += QString::fromStdString(r.text);
+            oc::Paragraph line;
+            line.styleId = p->styleId;
+            oc::TextRun lr;
+            int lvl = p->styleId == "Heading1" ? 0 : p->styleId == "Heading2" ? 1 : 2;
+            lr.text = std::string(lvl * 2, ' ') + text.toStdString() + " ……… " +
+                      std::to_string(view_->pageOfFlat(i) + 1);
+            line.runs = {lr};
+            tocs.push_back(line);
+        }
+        if (tocs.size() <= 1) {
+            logPanel_->log(QStringLiteral("WARN"), tr("未发现标题段（先设置标题1/2/3）"));
+            return;
+        }
+        editor_->insertParagraphsAtStart(tocs);
+        view_->refreshAfterEdit();
+        logPanel_->log(QStringLiteral("INFO"), tr("已生成目录（%1 条）").arg(tocs.size() - 1));
+    });
     QAction* insDate = ins->addAction(tr("日期和时间(&D)"));
     connect(insDate, &QAction::triggered, this, [this]() {
         QString d = QDate::currentDate().toString(tr("yyyy年M月d日"));
         view_->pasteTextAtCursor(d);
     });
 
-    QMenu* fmt = menuBar()->addMenu(tr("格式(&O)"));
-    (void)fmt;
+    QMenu* tblMenu = menuBar()->addMenu(tr("表格(&B)"));
+    auto addTblOp = [&](const QString& text, auto fn) {
+        QAction* a = tblMenu->addAction(text);
+        connect(a, &QAction::triggered, this, [this, fn]() {
+            if (editor_ && fn(view_->cursorPara())) { view_->refreshAfterEdit(); emit view_->edited(); }
+            else logPanel_->log(QStringLiteral("WARN"), tr("光标需在表格内"));
+        });
+    };
+    addTblOp(tr("在下方插入行"), [this](size_t fp) { return editor_->tableInsertRowAfter(fp); });
+    addTblOp(tr("删除本行"),     [this](size_t fp) { return editor_->tableDeleteRow(fp); });
+    addTblOp(tr("右侧插入列"),   [this](size_t fp) { return editor_->tableInsertColRight(fp); });
+    addTblOp(tr("删除末列"),     [this](size_t fp) { return editor_->tableDeleteCol(fp); });
     QAction* bold = edit->addAction(tr("加粗(&B)"));
     bold->setShortcut(QKeySequence::Bold);
     connect(bold, &QAction::triggered, this, [this]() {
