@@ -81,6 +81,9 @@ public:
     // 图片列表整体替换（UI 拖拽缩放用）
     void replaceRunsCommand2(size_t flatPara, std::vector<ImageRun> oldImgs,
                              std::vector<ImageRun> newImgs);
+    // 撤销/重做包装（CommandStack 操作后同步 stats——修复 #8）
+    bool undo();
+    bool redo();
 
     // ---- 剪贴板（M2.6）----
     // 复制 [from, to) 为富文本片段（跨段支持，保留 run 格式与段落结构）
@@ -93,6 +96,8 @@ public:
     static DocPos endOf(size_t flatPara, const Document& doc);// 段落末尾位置
 
 private:
+    // 任何编辑命令成功后的统一收尾：stats 同步（修复 #8：编辑后统计即时正确）
+    void afterEdit() { doc_.recountStats(); }
     // 字符级格式通用实现（选区∩run 求交 + 相邻同格式合并；命令化可撤销）
     bool formatRange(DocPos from, DocPos to,
                      const std::function<void(TextRun&)>& mutate, const char* name);
