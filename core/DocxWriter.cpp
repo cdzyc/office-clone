@@ -44,9 +44,11 @@ std::string DocxWriter::buildDocumentXml(const Document& doc) {
         std::string s = "<w:p>";
         // pPr
         bool hasPpr = !p.styleId.empty() || p.align != Align::Left ||
-                      p.spacingBeforePt16 || p.spacingAfterPt16 || p.lineSpacing;
+                      p.spacingBeforePt16 || p.spacingAfterPt16 || p.lineSpacing ||
+                      p.pageBreakBefore;
         if (hasPpr) {
             s += "<w:pPr>";
+            if (p.pageBreakBefore) s += "<w:pageBreakBefore/>";
             if (!p.styleId.empty())
                 s += "<w:pStyle w:val=\"" + xmlEscape(p.styleId) + "\"/>";
             if (p.align == Align::Center) s += "<w:jc w:val=\"center\"/>";
@@ -165,8 +167,12 @@ std::string DocxWriter::buildRelsXml(const Document& doc) {
     for (const auto& m : doc.mediaIndex)
         x += "<Relationship Id=\"" + xmlEscape(m.relId)
            + "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/image\" Target=\""
-           + xmlEscape(m.zipPath.substr(m.zipPath.rfind("word/") == 0 ? 5 : 0))  // 相对 word/ 的路径
+           + xmlEscape(m.zipPath.substr(m.zipPath.rfind("word/") == 0 ? 5 : 0))
            + "\"/>";
+    for (const auto& hf : doc.headerFooter)
+        x += "<Relationship Id=\"" + xmlEscape(hf.relId)
+           + "\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+           + hf.kind + "\" Target=\"" + xmlEscape(hf.zipPath.substr(5)) + "\"/>";
     x += "</Relationships>";
     return x;
 }
@@ -196,6 +202,12 @@ std::string DocxWriter::buildContentTypesXml(const Document& doc) {
         x += "<Default Extension=\"" + e + "\" ContentType=\"" + ct + "\"/>";
     }
     x += "<Override PartName=\"/word/document.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml\"/>";
+    for (const auto& hf : doc.headerFooter) {
+        std::string ct = hf.kind == "header"
+            ? "application/vnd.openxmlformats-officedocument.wordprocessingml.header+xml"
+            : "application/vnd.openxmlformats-officedocument.wordprocessingml.footer+xml";
+        x += "<Override PartName=\"/" + hf.zipPath + "\" ContentType=\"" + ct + "\"/>";
+    }
     x += "</Types>";
     return x;
 }
@@ -235,8 +247,17 @@ DocxWriteResult DocxWriter::write(const std::string& path, const Document& doc,
                 warnings->push_back("media not carried over: " + m.zipPath);
             continue;
         }
-        // 媒体多为已压缩格式（png/jpg）——ZipWriter 智能降级 stored
         if (!zw.add(m.zipPath, data, true, &r.error)) return r;
+    }
+    // 页眉/页脚部件保真搬运（批次G：防保存丢页眉）
+    for (const auto& hf : doc.headerFooter) {
+        std::vector<uint8_t> data;
+        bool ok = media && media(hf.relId, hf.zipPath, data);
+        if (ok) {
+            if (!zw.add(hf.zipPath, data, true, &r.error)) return r;
+        } else if (warnings) {
+            warnings->push_back("header/footer not carried over: " + hf.zipPath);
+        }
     }
 
     if (!zw.finalize(&r.error)) return r;
