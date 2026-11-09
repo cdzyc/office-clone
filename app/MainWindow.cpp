@@ -31,13 +31,23 @@
 #include <QTreeWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QDate>
+#include <QDialog>
+#include <QLabel>
+#include <QPushButton>
+#include <QVBoxLayout>
+#include <QDialogButtonBox>
+#include <QFile>
+#include <QSpinBox>
 #include <QTimer>
 #include <chrono>
+#include <map>
 #include <thread>
 
 namespace oc::qt {
 
 ZipReader* MainWindow::s_srcZip = nullptr;
+const std::map<QString, std::vector<uint8_t>>* MainWindow::s_newMedia = nullptr;
 
 MainWindow::MainWindow() {
     setWindowTitle(tr("Office Clone — Word"));
@@ -158,6 +168,19 @@ void MainWindow::buildMenu() {
     addEdit(tr("粘贴(&P)"), QKeySequence::Paste, "paste");
     addEdit(tr("全选(&A)"), QKeySequence::SelectAll, "selectall");
     edit->addSeparator();
+    QMenu* ins = menuBar()->addMenu(tr("插入(&I)"));
+    QAction* insImg = ins->addAction(tr("图片(&P)..."));
+    connect(insImg, &QAction::triggered, this, [this]() { onInsertImage(); });
+    QAction* insTbl = ins->addAction(tr("表格(&T)..."));
+    connect(insTbl, &QAction::triggered, this, [this]() { onInsertTable(); });
+    QAction* insDate = ins->addAction(tr("日期和时间(&D)"));
+    connect(insDate, &QAction::triggered, this, [this]() {
+        QString d = QDate::currentDate().toString(tr("yyyy年M月d日"));
+        view_->pasteTextAtCursor(d);
+    });
+
+    QMenu* fmt = menuBar()->addMenu(tr("格式(&O)"));
+    (void)fmt;
     QAction* bold = edit->addAction(tr("加粗(&B)"));
     bold->setShortcut(QKeySequence::Bold);
     connect(bold, &QAction::triggered, this, [this]() {
@@ -553,8 +576,14 @@ void MainWindow::onEdited() {
                          .arg(QString::fromStdString(doc_->summary())));
 }
 
-bool MainWindow::mediaProvider(const std::string&, const std::string& zipPath,
+bool MainWindow::mediaProvider(const std::string& relId, const std::string& zipPath,
                                std::vector<uint8_t>& out) {
+    // 内存新媒体（本会话插入）优先
+    if (s_newMedia) {
+        auto it = s_newMedia->find(QString::fromStdString(relId));
+        if (it != s_newMedia->end()) { out = it->second; return true; }
+    }
+    (void)zipPath;
     if (!s_srcZip) return false;
     const ZipEntry* e = s_srcZip->find(zipPath);
     return e && s_srcZip->read(*e, out);
@@ -566,6 +595,7 @@ bool MainWindow::writeDocxTo(const QString& targetPath) {
     //（真机战报 #4：保存报 cannot create zip）
     if (srcZip_ && targetPath == openPath_) srcZip_.reset();
     s_srcZip = srcZip_.get();
+    s_newMedia = &newMediaBytes_;
     std::vector<std::string> warnings;
     auto t0 = std::chrono::steady_clock::now();
     DocxWriteResult r = DocxWriter::write(targetPath.toStdString(), *doc_,
@@ -573,6 +603,7 @@ bool MainWindow::writeDocxTo(const QString& targetPath) {
     double ms = std::chrono::duration<double, std::milli>(
                     std::chrono::steady_clock::now() - t0).count();
     s_srcZip = nullptr;
+    s_newMedia = nullptr;
     // 保存后重新打开长驻句柄（后续保存的媒体搬运基準）
     if (!srcZip_) {
         srcZip_ = std::make_unique<ZipReader>();
@@ -599,6 +630,71 @@ bool MainWindow::writeDocxTo(const QString& targetPath) {
                        .arg(ms / 1000.0, 0, 'f', 1));
     status_->setText(tr("已保存 ✓ %1").arg(QFileInfo(targetPath).fileName()));
     return true;
+}
+
+
+void MainWindow::onInsertImage() {
+    if (!doc_ || !editor_) return;
+    QString path = QFileDialog::getOpenFileName(this, tr("插入图片"), QString(),
+        tr("图片 (*.png *.jpg *.jpeg *.bmp *.gif);;所有文件 (*)"));
+    if (path.isEmpty()) return;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) {
+        logPanel_->log(QStringLiteral("ERROR"), tr("读图片失败：%1").arg(path));
+        return;
+    }
+    QByteArray bytes = f.readAll();
+    QImage img = QImage::fromData(bytes);
+    if (img.isNull()) {
+        logPanel_->log(QStringLiteral("ERROR"), tr("无法解码图片：%1").arg(path));
+        return;
+    }
+    // 生成 relId 与媒体条目（A4 正文宽内等比）
+    QString relId = QStringLiteral("rIdNewImg%1").arg(++newMediaSeq_);
+    QString ext = QFileInfo(path).suffix().toLower();
+    if (ext == QLatin1String("jpeg")) ext = QStringLiteral("jpg");
+    if (ext.isEmpty()) ext = QStringLiteral("png");
+    std::string zipPath = "word/media/" + relId.toStdString() + "." + ext.toStdString();
+    MediaEntry me;
+    me.relId = relId.toStdString();
+    me.zipPath = zipPath;
+    me.byteSize = (uint64_t)bytes.size();
+    doc_->mediaIndex.push_back(me);                    // const 转换由 editor 路径处理（见下）
+    double w = img.width() * 9525.0, h = img.height() * 9525.0;
+    const double maxW = 610.0 * 9525.0;                // ≈A4 正文宽
+    if (w > maxW) { h = h * maxW / w; w = maxW; }
+    size_t curPara = view_->cursorPara();
+    editor_->insertImage(curPara, relId.toStdString(),
+                         (uint32_t)w, (uint32_t)h);
+    if (imageCache_)
+        imageCache_->addMemoryMedia(relId.toStdString(),
+                                    std::vector<uint8_t>(bytes.begin(), bytes.end()));
+    newMediaBytes_[relId] = std::vector<uint8_t>(bytes.begin(), bytes.end());
+    view_->refreshAfterEdit();
+    logPanel_->log(QStringLiteral("INFO"),
+                   tr("插入图片：%1（%2×%3 px）")
+                       .arg(QFileInfo(path).fileName()).arg(img.width()).arg(img.height()));
+}
+
+void MainWindow::onInsertTable() {
+    if (!doc_ || !editor_) return;
+    QDialog dlg(this);
+    dlg.setWindowTitle(tr("插入表格"));
+    auto* rows = new QSpinBox(&dlg); rows->setRange(1, 100); rows->setValue(3);
+    auto* cols = new QSpinBox(&dlg); cols->setRange(1, 20); cols->setValue(3);
+    auto* ok = new QPushButton(tr("确定"), &dlg);
+    auto* lay = new QVBoxLayout(&dlg);
+    auto* r1 = new QHBoxLayout; r1->addWidget(new QLabel(tr("行数:"), &dlg)); r1->addWidget(rows);
+    auto* r2 = new QHBoxLayout; r2->addWidget(new QLabel(tr("列数:"), &dlg)); r2->addWidget(cols);
+    lay->addLayout(r1); lay->addLayout(r2); lay->addWidget(ok);
+    connect(ok, &QPushButton::clicked, &dlg, &QDialog::accept);
+    if (dlg.exec() != QDialog::Accepted) return;
+    size_t curPara = view_->cursorPara();
+    if (editor_->insertTableAfter(curPara, (uint32_t)rows->value(), (uint32_t)cols->value())) {
+        view_->refreshAfterEdit();
+        logPanel_->log(QStringLiteral("INFO"),
+                       tr("插入表格：%1 行 × %2 列").arg(rows->value()).arg(cols->value()));
+    }
 }
 
 void MainWindow::onSave() {
