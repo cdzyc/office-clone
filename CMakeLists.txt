@@ -32,6 +32,22 @@ target_include_directories(oc_core PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 # ---------------- 测试与基准（无 Qt 依赖）----------------
 enable_testing()
 
+# 测试夹具自动生成（修复 #4：ctest 前自动跑 make_fixtures.py，无需手动）
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if (Python3_FOUND)
+    add_custom_command(
+        OUTPUT  ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/mini_bid.docx
+        COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/tests/make_fixtures.py
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        COMMENT "Generating test fixtures"
+        VERBATIM)
+    add_custom_target(oc_fixtures DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/tests/data/mini_bid.docx)
+    add_dependencies(core_tests oc_fixtures)
+    add_dependencies(m2_tests oc_fixtures)
+    add_dependencies(m3_tests oc_fixtures)
+    add_dependencies(e2e_tests oc_fixtures)
+endif()
+
 add_executable(core_tests tests/core_tests.cpp)
 target_link_libraries(core_tests PRIVATE oc_core)
 add_test(NAME core_tests
