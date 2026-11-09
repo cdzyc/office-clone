@@ -524,6 +524,144 @@ bool DocumentEditor::insertTableAfter(size_t flatPara, uint32_t rows, uint32_t c
     return true;
 }
 
+bool DocumentEditor::setPageBreakBefore(size_t flatPara, bool val) {
+    ParaLoc loc = locate(flatPara);
+    if (!loc.p) return false;
+    bool old = loc.p->pageBreakBefore;
+    size_t para = flatPara;
+    stack_.execute(CommandStack::makeCmd(
+        "pagebreak",
+        [this, para, old] { if (Paragraph* p = paragraphAt(para)) p->pageBreakBefore = old; },
+        [this, para, val] { if (Paragraph* p = paragraphAt(para)) p->pageBreakBefore = val; }));
+    return true;
+}
+
+bool DocumentEditor::removeImage(size_t flatPara, size_t imageIdx) {
+    ParaLoc loc = locate(flatPara);
+    if (!loc.p || imageIdx >= loc.p->images.size()) return false;
+    std::vector<ImageRun> oldImgs = loc.p->images;
+    loc.p->images.erase(loc.p->images.begin() + (long)imageIdx);
+    std::vector<ImageRun> newImgs = loc.p->images;
+    size_t para = flatPara;
+    stack_.execute(CommandStack::makeCmd(
+        "remove-image",
+        [this, para, oldImgs] { if (Paragraph* p = paragraphAt(para)) p->images = oldImgs; },
+        [this, para, newImgs] { if (Paragraph* p = paragraphAt(para)) p->images = newImgs; }));
+    return true;
+}
+
+// ---- 表格行列操作（body 快照撤销；定位光标段所在表格）----
+static bool locateTable(Document& doc, DocumentEditor& ed, size_t flatPara,
+                        size_t* bodyIdx, size_t* rowIdx) {
+    // 借助 editor 的扁平视图：重新遍历定位
+    size_t n = 0;
+    for (size_t bi = 0; bi < doc.body.size(); ++bi) {
+        Node& node = doc.body[bi];
+        if (node.kind == Node::Kind::Paragraph) {
+            if (n == flatPara) return false;            // 光标不在表格
+            ++n;
+        } else {
+            for (size_t ri = 0; ri < node.table.rows.size(); ++ri) {
+                auto& row = node.table.rows[ri];
+                for (auto& cell : row.cells) {
+                    if (flatPara < n + cell.paragraphs.size()) {
+                        *bodyIdx = bi; *rowIdx = ri;
+                        return true;
+                    }
+                    n += cell.paragraphs.size();
+                }
+            }
+        }
+    }
+    return false;
+}
+
+bool DocumentEditor::tableInsertRowAfter(size_t flatPara) {
+    size_t bi, ri;
+    if (!locateTable(doc_, *this, flatPara, &bi, &ri)) return false;
+    Table oldT = doc_.body[bi].table;
+    Table newT = oldT;
+    if (ri + 1 >= newT.rows.size())
+        newT.rows.push_back(TableRow{newT.rows.front().cells});
+    else
+        newT.rows.insert(newT.rows.begin() + (long)ri + 1, newT.rows[ri]);
+    size_t idx = bi;
+    stack_.execute(CommandStack::makeCmd(
+        "table-row+",
+        [this, idx, oldT] { doc_.body[idx].table = oldT; },
+        [this, idx, newT] { doc_.body[idx].table = newT; }));
+    return true;
+}
+
+bool DocumentEditor::tableDeleteRow(size_t flatPara) {
+    size_t bi, ri;
+    if (!locateTable(doc_, *this, flatPara, &bi, &ri)) return false;
+    if (doc_.body[bi].table.rows.size() <= 1) return false;   // 至少留一行
+    Table oldT = doc_.body[bi].table;
+    Table newT = oldT;
+    newT.rows.erase(newT.rows.begin() + (long)ri);
+    size_t idx = bi;
+    stack_.execute(CommandStack::makeCmd(
+        "table-row-",
+        [this, idx, oldT] { doc_.body[idx].table = oldT; },
+        [this, idx, newT] { doc_.body[idx].table = newT; }));
+    return true;
+}
+
+bool DocumentEditor::tableInsertColRight(size_t flatPara) {
+    size_t bi, ri;
+    if (!locateTable(doc_, *this, flatPara, &bi, &ri)) return false;
+    Table oldT = doc_.body[bi].table;
+    Table newT = oldT;
+    for (auto& row : newT.rows) {
+        TableCell nc;
+        nc.paragraphs.emplace_back();
+        row.cells.push_back(std::move(nc));
+    }
+    if (!newT.colWidthsDxa.empty())
+        newT.colWidthsDxa.push_back(9638 / (newT.colWidthsDxa.size() + 1));
+    size_t idx = bi;
+    stack_.execute(CommandStack::makeCmd(
+        "table-col+",
+        [this, idx, oldT] { doc_.body[idx].table = oldT; },
+        [this, idx, newT] { doc_.body[idx].table = newT; }));
+    return true;
+}
+
+bool DocumentEditor::tableDeleteCol(size_t flatPara) {
+    size_t bi, ri;
+    if (!locateTable(doc_, *this, flatPara, &bi, &ri)) return false;
+    Table oldT = doc_.body[bi].table;
+    size_t cols = 0;
+    for (const auto& r : oldT.rows) cols = std::max(cols, r.cells.size());
+    if (cols <= 1) return false;                             // 至少留一列
+    Table newT = oldT;
+    for (auto& row : newT.rows)
+        if (!row.cells.empty()) row.cells.pop_back();
+    if (!newT.colWidthsDxa.empty()) newT.colWidthsDxa.pop_back();
+    size_t idx = bi;
+    stack_.execute(CommandStack::makeCmd(
+        "table-col-",
+        [this, idx, oldT] { doc_.body[idx].table = oldT; },
+        [this, idx, newT] { doc_.body[idx].table = newT; }));
+    return true;
+}
+
+bool DocumentEditor::insertParagraphsAtStart(const std::vector<Paragraph>& paras) {
+    std::vector<Node> newNodes;
+    newNodes.reserve(paras.size());
+    for (const auto& p : paras)
+        newNodes.push_back(Node{Node::Kind::Paragraph, p, Table{}});
+    size_t cnt = newNodes.size();
+    stack_.execute(CommandStack::makeCmd(
+        "insert-paras",
+        [this, cnt] { doc_.body.erase(doc_.body.begin(), doc_.body.begin() + (long)cnt); },
+        [this, newNodes]() mutable {
+            doc_.body.insert(doc_.body.begin(), newNodes.begin(), newNodes.end());
+        }));
+    return true;
+}
+
 bool DocumentEditor::setIndent(size_t flatPara, uint32_t left, uint32_t right, int firstLine) {
     ParaLoc loc = locate(flatPara);
     if (!loc.p) return false;
@@ -728,6 +866,15 @@ bool DocumentEditor::paste(DocPos pos, const ClipboardFragment& frag) {
     };
     stack_.execute(CommandStack::makeCmd("paste-multi", undoFn, redoFn));
     return true;
+}
+
+
+void DocumentEditor::replaceRunsCommand2(size_t flatPara, std::vector<ImageRun> oldImgs,
+                                         std::vector<ImageRun> newImgs) {
+    stack_.execute(CommandStack::makeCmd(
+        "img-resize",
+        [this, flatPara, oldImgs] { if (Paragraph* p = paragraphAt(flatPara)) p->images = oldImgs; },
+        [this, flatPara, newImgs] { if (Paragraph* p = paragraphAt(flatPara)) p->images = newImgs; }));
 }
 
 } // namespace oc
