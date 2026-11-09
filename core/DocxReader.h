@@ -11,8 +11,8 @@ namespace oc {
 struct DocxReadResult {
     bool ok = false;
     std::string error;
-    // 解析告警（不致命）：如不支持的特性
     std::vector<std::string> warnings;
+    std::vector<std::string> headerFooterParts;  // 原包页眉/页脚部件（保存时搬运保真）
 };
 
 class DocxReader {
@@ -29,7 +29,7 @@ private:
                                  const std::string& mediaBase,
                                  std::vector<std::string>& warnings);
     static bool parseRels(const std::vector<uint8_t>& xml, const std::string& base,
-                          Document& doc);
+                          Document& doc, std::vector<std::string>* hfParts = nullptr);
 };
 
 } // namespace oc
