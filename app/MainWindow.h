@@ -51,6 +51,7 @@ private:
     static bool mediaProvider(const std::string& relId, const std::string& zipPath,
                               std::vector<uint8_t>& out);
     static ZipReader* s_srcZip;               // 保存期间有效
+    static const std::map<QString, std::vector<uint8_t>>* s_newMedia;
 
     PageView* view_ = nullptr;
     LogPanel* logPanel_ = nullptr;            // 右下角日志框
@@ -71,6 +72,11 @@ private:
     QList<QAction*> alignActs_;
     bool syncingToolbar_ = false;
     QTreeWidget* outlineTree_ = nullptr;      // 左侧大纲导航
+    // 批次C：插入媒体
+    int newMediaSeq_ = 0;
+    std::map<QString, std::vector<uint8_t>> newMediaBytes_;
+    void onInsertImage();
+    void onInsertTable();
     QTimer* autosaveTimer_ = nullptr;         // 自动保存（静默30s）
     class FindReplaceDialog* findDlg_ = nullptr;
     std::unique_ptr<oc::ImageCache> imageCache_;   // 图片按需解码+LRU
