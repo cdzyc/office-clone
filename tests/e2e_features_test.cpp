@@ -118,7 +118,7 @@ int main(int argc, char** argv) {
     for (size_t i = 0; i < ed.paragraphCount(); ++i)
         if (ed.paragraphText(i).size() > 50) { target = i; break; }
     std::string before = ed.paragraphText(target);
-    const Paragraph* tp = ed.paragraphAt(target);
+    // 光标段定位由后续命令使用
 
     // 1 输入
     CHECK(ed.insertText({target, 0, 0}, "[E2E]"), "输入文本");
