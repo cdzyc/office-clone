@@ -406,6 +406,18 @@ void PageView::paintEvent(QPaintEvent*) {
                 iy += im.h + 4;
             }
         }
+        // 查找命中高亮（字符级黄底，同行区间）
+        for (const auto& m : matches_) {
+            if (m.flat != (size_t)b.flat) continue;
+            QTextLine ls = b.layout->lineForTextPosition(m.start);
+            QTextLine le = b.layout->lineForTextPosition(m.start + m.len);
+            if (ls.isValid() && le.isValid() && ls.lineNumber() == le.lineNumber()) {
+                qreal x1 = ls.cursorToX(m.start), x2 = le.cursorToX(m.start + m.len);
+                p.fillRect(QRectF(b.textX + x1, b.y - scrollY + ls.y(),
+                                  x2 - x1, ls.height()).toRect(),
+                           QColor(255, 235, 59, 160));
+            }
+        }
         // 文本（含每 run 富格式）
         b.layout->draw(&p, QPointF(b.textX, b.y - scrollY));
 
@@ -453,6 +465,30 @@ void PageView::timerEvent(QTimerEvent* e) {
 
 // ---------------- 交互 ----------------
 
+void PageView::startFormatBrush() {
+    if (!ed_) return;
+    const oc::Paragraph* p = ed_->paragraphAt(cursor_.para);
+    if (!p || p->runs.empty()) return;
+    brushFmt_ = p->runs[std::min(cursor_.run, p->runs.size() - 1)];
+    brushActive_ = true;
+    viewport()->setCursor(Qt::CrossCursor);
+}
+
+void PageView::highlightAllMatches(const QString& needle) {
+    matches_.clear();
+    if (!ed_ || needle.isEmpty()) { viewport()->update(); return; }
+    const size_t n = ed_->paragraphCount();
+    for (size_t flat = 0; flat < n; ++flat) {
+        QString text = paraText(flat);
+        int at = 0;
+        while ((at = text.indexOf(needle, at, Qt::CaseInsensitive)) >= 0) {
+            matches_.push_back({flat, at, needle.size()});
+            at += needle.size();
+        }
+    }
+    viewport()->update();
+}
+
 void PageView::mousePressEvent(QMouseEvent* e) {
     if (!ed_) return;
     setFocus();
@@ -464,6 +500,27 @@ void PageView::mousePressEvent(QMouseEvent* e) {
         anchor_ = pos;
     }
     cursor_ = pos;
+    // 格式刷：应用缓存的格式到目标段（或选区）
+    if (brushActive_ && ed_) {
+        brushActive_ = false;
+        viewport()->setCursor(Qt::IBeamCursor);
+        const bool hasSel = !(anchor_ == cursor_);
+        DocPos a = hasSel ? (anchor_ < cursor_ ? anchor_ : cursor_) : DocPos{pos.para, 0, 0};
+        DocPos b = hasSel ? (cursor_ < anchor_ ? anchor_ : cursor_)
+                          : endOfPara(pos.para);
+        auto& F = brushFmt_;
+        if (F.bold || !F.bold) ed_->setBold(a, b, F.bold);
+        ed_->setItalic(a, b, F.italic);
+        ed_->setUnderline(a, b, F.underline);
+        ed_->setStrike(a, b, F.strike);
+        if (F.fontSizePt > 0) ed_->setFontSize(a, b, F.fontSizePt);
+        if (!F.fontEastAsia.empty()) ed_->setFontName(a, b, F.fontEastAsia, F.fontAscii);
+        if (!F.color.empty()) ed_->setTextColor(a, b, F.color);
+        if (!F.highlight.empty()) ed_->setHighlight(a, b, F.highlight);
+        relayoutAndKeepCursor();
+        emit edited();
+        return;
+    }
     mouseDragging_ = true;
     viewport()->update();
     emit cursorMoved();
@@ -654,6 +711,7 @@ QVariant PageView::inputMethodQuery(Qt::InputMethodQuery q) const {
 }
 
 void PageView::relayoutAndKeepCursor() {
+    matches_.clear();          // 内容变化后命中高亮失效
     rebuildLayout();
     ensureVisible(cursorY());
     cursorVisible_ = true;
