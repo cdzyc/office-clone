@@ -61,7 +61,7 @@ target_link_libraries(oc_bench PRIVATE oc_core)
 # ---------------- Qt UI（Windows 桌面）----------------
 option(OC_BUILD_QT "Build Qt 6 desktop application" OFF)
 if (OC_BUILD_QT)
-    find_package(Qt6 REQUIRED COMPONENTS Widgets)
+    find_package(Qt6 REQUIRED COMPONENTS Widgets PrintSupport)
     # 兼容所有 Qt 6 版本（qt_standard_project_setup 需 6.3+）
     set(CMAKE_AUTOMOC ON)
     set(CMAKE_AUTORCC ON)
@@ -73,8 +73,9 @@ if (OC_BUILD_QT)
         app/LogPanel.cpp
         app/PageView.cpp
         app/FindReplace.cpp
+        app/PdfExporter.cpp
     )
-    target_link_libraries(office-clone PRIVATE Qt6::Widgets oc_core)
+    target_link_libraries(office-clone PRIVATE Qt6::Widgets Qt6::PrintSupport oc_core)
     set_target_properties(office-clone PROPERTIES
         WIN32_EXECUTABLE TRUE
         MACOSX_BUNDLE TRUE)
