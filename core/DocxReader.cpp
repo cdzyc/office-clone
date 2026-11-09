@@ -89,7 +89,7 @@ bool DocxReader::readMedia(const std::string& path, const std::string& zipPath,
 }
 
 bool DocxReader::parseRels(const std::vector<uint8_t>& xml, const std::string& base,
-                           Document& doc, std::vector<std::string>* hfParts) {
+                           Document& doc, std::vector<std::string>* /*hfParts*/) {
     std::string_view sv(reinterpret_cast<const char*>(xml.data()), xml.size());
     XmlPullParser p;
     p.setInput(sv);
