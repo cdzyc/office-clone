@@ -63,6 +63,11 @@ public:
     // 段落缩进（twips；firstLine 负=悬挂）与行距（240=单倍）
     bool setIndent(size_t flatPara, uint32_t left, uint32_t right, int firstLine);
     bool setLineSpacing(size_t flatPara, uint32_t line240);
+    // 批次C：在段落插入内联图片（可撤销；媒体条目由调用方维护 Document::mediaIndex）
+    bool insertImage(size_t flatPara, const std::string& relId,
+                     uint32_t cxEmu, uint32_t cyEmu);
+    // 在指定段之后插入 rows×cols 空表格（列宽均分 A4 正文宽）
+    bool insertTableAfter(size_t flatPara, uint32_t rows, uint32_t cols);
 
     // ---- 剪贴板（M2.6）----
     // 复制 [from, to) 为富文本片段（跨段支持，保留 run 格式与段落结构）
