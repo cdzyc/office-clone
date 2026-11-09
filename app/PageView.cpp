@@ -464,6 +464,11 @@ void PageView::paintEvent(QPaintEvent*) {
                        QColor(0xD8, 0xE4, 0xFA));
         }
 
+        // 选中图片高亮框（批次G）
+        if (imgSelPara_ == (size_t)b.flat && !b.imgs.isEmpty()) {
+            p.setPen(QPen(QColor(0x11, 0x82, 0xC8), 2));
+            p.drawRect(QRectF(b.textX, b.y - scrollY, b.imgs.front().w, b.imgs.front().h));
+        }
         // 图片真实显示（ImageCache 按需解码 + LRU；未命中画灰框占位）
         if (!b.imgs.isEmpty()) {
             qreal ix = b.x, iy = b.y - scrollY;
@@ -580,6 +585,19 @@ void PageView::mousePressEvent(QMouseEvent* e) {
     if (!ed_) return;
     setFocus();
     QPointF docPt(e->pos().x() + 0, e->pos().y() + verticalScrollBar()->value());
+    // 批次G：图片命中（点击图片区→选中；拖右下角手柄→缩放）
+    for (const auto& b : boxes_) {
+        if (!b.imgs.isEmpty() && docPt.y() >= b.y && docPt.y() < b.y + b.imgBlockH &&
+            docPt.x() >= b.textX && docPt.x() < b.textX + b.textW) {
+            imgSelPara_ = (size_t)b.flat;
+            imgDragging_ = true;
+            imgDragStart_ = docPt;
+            viewport()->update();
+            return;
+        }
+    }
+    imgSelPara_ = SIZE_MAX;
+    imgDragging_ = false;
     DocPos pos = hitPos(docPt);
     if (e->modifiers() & Qt::ShiftModifier) {
         anchor_ = anchor_;                              // Shift+点击扩选
@@ -614,6 +632,23 @@ void PageView::mousePressEvent(QMouseEvent* e) {
 }
 
 void PageView::mouseMoveEvent(QMouseEvent* e) {
+    if (imgDragging_ && ed_ && imgSelPara_ != SIZE_MAX) {
+        QPointF docPt(e->pos().x(), e->pos().y() + verticalScrollBar()->value());
+        // 拖拽缩放：按横向位移等比调最后一张图
+        const Paragraph* p = ed_->paragraphAt(imgSelPara_);
+        if (p && !p->images.empty()) {
+            ImageRun im = p->images.back();
+            im.cxEmu = std::max((uint32_t)190500, (uint32_t)(im.cxEmu + (docPt.x() - imgDragStart_.x()) * 9525));
+            im.cyEmu = std::max((uint32_t)127000, (uint32_t)(im.cyEmu + (docPt.x() - imgDragStart_.x()) * 9525));
+            std::vector<ImageRun> oldI = p->images, newI = oldI;
+            newI.back() = im;
+            size_t fp = imgSelPara_;
+            ed_->replaceRunsCommand2(fp, std::move(oldI), std::move(newI));
+            imgDragStart_ = docPt;
+            relayoutAndKeepCursor();
+        }
+        return;
+    }
     if (!mouseDragging_ || !ed_) return;
     QPointF docPt(e->pos().x(), e->pos().y() + verticalScrollBar()->value());
     cursor_ = hitPos(docPt);
@@ -623,6 +658,7 @@ void PageView::mouseMoveEvent(QMouseEvent* e) {
 
 void PageView::mouseReleaseEvent(QMouseEvent*) {
     mouseDragging_ = false;
+    if (imgDragging_) { imgDragging_ = false; emit edited(); }
 }
 
 void PageView::keyPressEvent(QKeyEvent* e) {
@@ -662,6 +698,14 @@ void PageView::keyPressEvent(QKeyEvent* e) {
         }
         break;
     case Qt::Key_Delete:
+        if (imgSelPara_ != SIZE_MAX) {
+            const Paragraph* sp = ed_->paragraphAt(imgSelPara_);
+            if (sp && !sp->images.empty()) {
+                ed_->removeImage(imgSelPara_, sp->images.size() - 1);
+                imgSelPara_ = SIZE_MAX;
+                break;
+            }
+        }
         if (hasSel) ed_->deleteRange(selStart, selEnd);
         else {
             DocPos next = cursor_;
@@ -1231,3 +1275,17 @@ void PageView::moveCursorToStart() {
 }
 
 } // namespace oc::qt
+
+namespace oc { namespace qt {
+int PageView::pageOfFlat(size_t flat) const {
+    for (const auto& b : boxes_)
+        if ((size_t)b.flat == flat) {
+            // 从 pageBreaks_ 计数：段 y 之前的分页点数 = 页号
+            int pg = 0;
+            for (qreal brk : pageBreaks_)
+                if (b.y >= brk) ++pg;
+            return pg;
+        }
+    return 0;
+}
+}} // namespace
