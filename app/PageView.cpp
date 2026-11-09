@@ -482,7 +482,7 @@ void PageView::highlightAllMatches(const QString& needle) {
         QString text = paraText(flat);
         int at = 0;
         while ((at = text.indexOf(needle, at, Qt::CaseInsensitive)) >= 0) {
-            matches_.push_back({flat, at, needle.size()});
+            matches_.push_back({flat, at, (int)needle.size()});
             at += needle.size();
         }
     }
