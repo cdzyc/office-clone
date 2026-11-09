@@ -863,14 +863,14 @@ bool PageView::canUndo() const { return cs_ && cs_->canUndo(); }
 bool PageView::canRedo() const { return cs_ && cs_->canRedo(); }
 
 bool PageView::undo() {
-    if (!cs_ || !cs_->undo()) return false;
+    if (!ed_ || !ed_->undo()) return false;
     relayoutAndKeepCursor();
     emit edited();
     return true;
 }
 
 bool PageView::redo() {
-    if (!cs_ || !cs_->redo()) return false;
+    if (!ed_ || !ed_->redo()) return false;
     relayoutAndKeepCursor();
     emit edited();
     return true;
