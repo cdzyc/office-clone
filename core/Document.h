@@ -40,6 +40,7 @@ struct Paragraph {
     uint32_t lineSpacing = 0;                             // 240 = 单倍（480=双倍）
     uint32_t indLeftTw = 0, indRightTw = 0;               // w:ind 左右缩进（twips）
     int indFirstLineTw = 0;                               // 首行缩进（负=悬挂）
+    bool pageBreakBefore = false;                          // w:pageBreakBefore 段前分页
 };
 
 struct TableCell {
@@ -89,6 +90,9 @@ class Document {
 public:
     std::vector<Node> body;
     std::vector<MediaEntry> mediaIndex;   // relId → zip 路径（按需解码的索引）
+    // 页眉/页脚关系（保存保真搬运：relId + zipPath + 类型）
+    struct HFPart { std::string relId, zipPath, kind; };  // kind: header/footer
+    std::vector<HFPart> headerFooter;
     PageSetup page;
     DocumentStats stats;
     std::string sourcePath;               // 打开的 docx 路径
