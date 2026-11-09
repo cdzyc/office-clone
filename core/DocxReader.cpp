@@ -26,7 +26,7 @@ DocxReadResult DocxReader::read(const std::string& path, Document& doc) {
     // 1) 关系文件：word/_rels/document.xml.rels → 媒体索引
     if (const ZipEntry* rels = zip.find("word/_rels/document.xml.rels")) {
         std::vector<uint8_t> data;
-        if (zip.read(*rels, data) && !parseRels(data, "word/", doc)) {
+        if (zip.read(*rels, data) && !parseRels(data, "word/", doc, &r.headerFooterParts)) {
             r.error = "parse document.xml.rels failed";
             return r;
         }
@@ -89,7 +89,7 @@ bool DocxReader::readMedia(const std::string& path, const std::string& zipPath,
 }
 
 bool DocxReader::parseRels(const std::vector<uint8_t>& xml, const std::string& base,
-                           Document& doc) {
+                           Document& doc, std::vector<std::string>* hfParts) {
     std::string_view sv(reinterpret_cast<const char*>(xml.data()), xml.size());
     XmlPullParser p;
     p.setInput(sv);
@@ -103,8 +103,16 @@ bool DocxReader::parseRels(const std::vector<uint8_t>& xml, const std::string& b
             if (id && target && type && type->find("/image") != std::string::npos) {
                 MediaEntry m;
                 m.relId = *id;
-                m.zipPath = base + *target;      // word/media/xxx.png（首版不做../解析）
+                m.zipPath = base + *target;
                 doc.mediaIndex.push_back(std::move(m));
+            } else if (id && target && type &&
+                       (type->find("/header") != std::string::npos ||
+                        type->find("/footer") != std::string::npos)) {
+                Document::HFPart hf;
+                hf.relId = *id;
+                hf.zipPath = base + *target;
+                hf.kind = type->find("/header") != std::string::npos ? "header" : "footer";
+                doc.headerFooter.push_back(hf);
             }
         }
     }
@@ -237,6 +245,7 @@ bool DocxReader::parseDocumentXml(const std::vector<uint8_t>& xml, Document& doc
                 curPara.lineSpacing = parseU(p.attr("w:line"), 240);
                 continue;
             }
+            if (tag == "w:pageBreakBefore" && cur == Ctx::Para) { curPara.pageBreakBefore = true; continue; }
             if (tag == "w:ind") {
                 // ⚠️ 真机战报 #5：OOXML 允许负缩进（如 left=-425），
                 // uint32 解析会爆成 42 亿 → 渲染行宽为负 → 崩溃。一律 clamp ≥0。
